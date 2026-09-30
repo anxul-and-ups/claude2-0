@@ -289,6 +289,7 @@ fun NoteEditorScreen(
     var isStrikethrough by remember { mutableStateOf(initialNote?.isStrikethrough ?: false) }
     var isCodeFormat by remember { mutableStateOf(initialNote?.isCodeFormat ?: false) }
     var showFormatSheet by remember { mutableStateOf(false) }
+    var showParagraphStyleSheet by remember { mutableStateOf(false) }
     var isJsonMode by remember { mutableStateOf(false) }
 
     var fontSize by remember { mutableStateOf(initialNote?.fontSize ?: 16) }
@@ -420,7 +421,7 @@ fun NoteEditorScreen(
     }
 
     // ---------- Samsung-Notes-style line tools (checkbox / bullets / numbers / indent) ----------
-    val listPrefixRegex = remember { Regex("^(\\s*)(\\[ \\] |\\[x\\] |• |\\d+\\. )?(.*)$", RegexOption.DOT_MATCHES_ALL) }
+    val listPrefixRegex = remember { Regex("^(\\s*)(\\[ \\] |\\[x\\] |• |\\d+\\. |[A-Za-z]\\. )?(.*)$", RegexOption.DOT_MATCHES_ALL) }
 
     fun linePrefixOf(line: String): String? = listPrefixRegex.matchEntire(line)?.groupValues?.get(2)?.ifEmpty { null }
 
@@ -493,20 +494,79 @@ fun NoteEditorScreen(
     fun toggleNumbers() {
         val first = linePrefixOf(firstSelectedLine())
         val isNumbered = first != null && first.first().isDigit()
+        listType = if (isNumbered) "none" else "digit"
         transformLines { l, i ->
             val (indent, body) = stripped(l)
             if (isNumbered) "$indent$body" else "$indent${i + 1}. $body"
         }
     }
 
-    fun indentLines() = transformLines { l, _ -> "  $l" }
-
-    fun outdentLines() = transformLines { l, _ ->
-        when {
-            l.startsWith("  ") -> l.substring(2)
-            l.startsWith(" ") || l.startsWith("\t") -> l.substring(1)
-            else -> l
+    fun toggleLetters() {
+        val first = linePrefixOf(firstSelectedLine())
+        val isLettered = first != null && first.length >= 2 && first[0].isLetter() && first[1] == '.'
+        listType = if (isLettered) "none" else "letter"
+        transformLines { l, i ->
+            val (indent, body) = stripped(l)
+            if (isLettered) "$indent$body" else "$indent${('a'.code + i).coerceAtMost('z'.code).toChar()}. $body"
         }
+    }
+
+    fun toggleParagraphList(type: String) {
+        when (type) {
+            "bullet" -> {
+                listType = if (linePrefixOf(firstSelectedLine()) == "• ") "none" else "bullet"
+                toggleBullets()
+            }
+            "digit" -> {
+                val first = linePrefixOf(firstSelectedLine())
+                if (first != null && first.firstOrNull()?.isDigit() == true) {
+                    listType = "none"
+                    transformLines { l, _ -> val (indent, body) = stripped(l); "$indent$body" }
+                } else {
+                    listType = "digit"
+                    transformLines { l, i -> val (indent, body) = stripped(l); "$indent${i + 1}. $body" }
+                }
+            }
+            "letter" -> toggleLetters()
+        }
+    }
+
+    fun renumberOrderedLines() {
+        val oldText = contentValue.text
+        var number = 1
+        var inOrderedBlock = false
+        val rebuilt = oldText.lines().joinToString("\n") { line ->
+            val m = listPrefixRegex.matchEntire(line)
+            val prefix = m?.groupValues?.get(2).orEmpty()
+            if (m != null && prefix.firstOrNull()?.isDigit() == true) {
+                inOrderedBlock = true
+                "${m.groupValues[1]}${number++}. ${m.groupValues[3]}"
+            } else {
+                if (inOrderedBlock && prefix.isBlank()) number = 1
+                inOrderedBlock = false
+                line
+            }
+        }
+        if (rebuilt != oldText) {
+            val caret = contentValue.selection.end.coerceIn(0, rebuilt.length)
+            contentValue = contentValue.copy(text = rebuilt, selection = TextRange(caret))
+        }
+    }
+
+    fun indentLines() {
+        transformLines { l, _ -> "  $l" }
+        renumberOrderedLines()
+    }
+
+    fun outdentLines() {
+        transformLines { l, _ ->
+            when {
+                l.startsWith("  ") -> l.substring(2)
+                l.startsWith(" ") || l.startsWith("\t") -> l.substring(1)
+                else -> l
+            }
+        }
+        renumberOrderedLines()
     }
 
     fun clearFormattingOnSelection() {
@@ -541,6 +601,10 @@ fun NoteEditorScreen(
         val nextPrefix = when {
             prefix == "• " -> "• "
             prefix.startsWith("[") -> "[ ] "
+            prefix.length >= 3 && prefix[0].isLetter() && prefix[1] == '.' -> {
+                val next = (prefix[0].lowercaseChar().code + 1).coerceAtMost('z'.code).toChar()
+                "$next. "
+            }
             else -> "${(prefix.dropLast(2).toIntOrNull() ?: 0) + 1}. "
         }
         val insertion = indent + nextPrefix
@@ -553,6 +617,15 @@ fun NoteEditorScreen(
     // explicitly requests a scroll whenever the caret moves, instead of
     // relying only on the platform's default (sometimes-late) behaviour.
     val contentBringIntoViewRequester = remember { BringIntoViewRequester() }
+
+    // Keep typing pinned to the caret instead of requiring manual scrolling.
+    LaunchedEffect(contentValue.text.length, contentValue.selection) {
+        if (contentValue.selection.collapsed && contentValue.selection.end >= contentValue.text.length - 1) {
+            kotlinx.coroutines.delay(60)
+            contentBringIntoViewRequester.bringIntoView()
+            mainScrollState.animateScrollTo(mainScrollState.maxValue)
+        }
+    }
 
     // DAY MODE CONTRAST FIX: Default text color in Day mode is dark (Color(0xFF111111))
     val defaultTextColor = if (isDarkMode) Color.White else Color(0xFF111111)
@@ -662,9 +735,31 @@ fun NoteEditorScreen(
                     }
                 }
 
-                // Note Body Scrollable Area (Auto-Scroll with safe bottom padding so text never gets hidden behind toolbar)
-                // Item 13: horizontal padding trimmed from 16dp to 8dp so the
-                // content area fills more of the phone's width.
+                // Pinned title bar — intentionally outside the scrolling note body.
+                GlassCard(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    isDarkMode = isDarkMode,
+                    elevation = 3.dp
+                ) {
+                    Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp)) {
+                        BasicTextField(
+                            value = title,
+                            onValueChange = { title = it },
+                            textStyle = TextStyle(fontSize = 22.sp, fontWeight = FontWeight.ExtraBold, color = if (isDarkMode) Color.White else Color(0xFF111111)),
+                            cursorBrush = SolidColor(CrimsonPrimary),
+                            decorationBox = { innerTextField ->
+                                if (title.isBlank()) Text("Untitled Note", fontSize = 22.sp, fontWeight = FontWeight.ExtraBold, color = if (isDarkMode) Color.White.copy(.35f) else Color.Gray.copy(.6f))
+                                innerTextField()
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Spacer(Modifier.height(3.dp))
+                        Text(SimpleDateFormat("EEEE, MMMM dd | HH:mm", Locale.getDefault()).format(Date()), fontSize = 11.sp, color = if (isDarkMode) Color.White.copy(.5f) else Color.Gray)
+                    }
+                }
+
+                // Note Body Scrollable Area
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -672,38 +767,6 @@ fun NoteEditorScreen(
                         .verticalScroll(mainScrollState)
                         .padding(horizontal = 8.dp, vertical = 8.dp)
                 ) {
-                    // Note Title Input
-                    BasicTextField(
-                        value = title,
-                        onValueChange = { title = it },
-                        textStyle = TextStyle(
-                            fontSize = 24.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = if (isDarkMode) Color.White else Color(0xFF111111)
-                        ),
-                        cursorBrush = SolidColor(CrimsonPrimary),
-                        decorationBox = { innerTextField ->
-                            if (title.isBlank()) {
-                                Text(
-                                    text = "Untitled Note",
-                                    fontSize = 24.sp,
-                                    fontWeight = FontWeight.ExtraBold,
-                                    color = if (isDarkMode) Color.White.copy(0.35f) else Color.Gray.copy(0.6f)
-                                )
-                            }
-                            innerTextField()
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = SimpleDateFormat("EEEE, MMMM dd | HH:mm", Locale.getDefault()).format(Date()),
-                        fontSize = 11.5.sp,
-                        color = if (isDarkMode) Color.White.copy(alpha = 0.5f) else Color.Gray
-                    )
-
-                    Spacer(modifier = Modifier.height(14.dp))
 
                     // Inline Attached Images (with Move, Resize, Crop, Rename support - PART F Item 5)
                     if (attachments.isNotEmpty()) {
@@ -901,28 +964,10 @@ fun NoteEditorScreen(
 
                         ToolDivider(isDarkMode)
 
-                        EditorTool(icon = Icons.Default.CheckBox, label = "Checkbox",
-                            active = curPrefix == "[ ] " || curPrefix == "[x] ", idleTint = idleTint) { toggleCheckbox() }
-                        EditorTool(icon = Icons.Default.FormatListBulleted, label = "Bullet list",
-                            active = curPrefix == "• ", idleTint = idleTint) { toggleBullets() }
-                        EditorTool(icon = Icons.Default.FormatListNumbered, label = "Numbered list",
-                            active = curPrefix != null && curPrefix.first().isDigit(), idleTint = idleTint) { toggleNumbers() }
-                        EditorTool(icon = Icons.Default.FormatIndentIncrease, label = "Indent", active = false, idleTint = idleTint) { indentLines() }
-                        EditorTool(icon = Icons.Default.FormatIndentDecrease, label = "Outdent", active = false, idleTint = idleTint) { outdentLines() }
+                        EditorTool(icon = Icons.Default.FormatListNumbered, label = "Paragraph style",
+                            active = listType != "none" || alignment != "left", idleTint = idleTint) { showParagraphStyleSheet = true }
 
                         ToolDivider(isDarkMode)
-
-                        // Alignment: one button that cycles left -> center -> right
-                        EditorTool(
-                            icon = when (alignment) {
-                                "center" -> Icons.Default.FormatAlignCenter
-                                "right" -> Icons.Default.FormatAlignRight
-                                else -> Icons.Default.FormatAlignLeft
-                            },
-                            label = "Alignment", active = alignment != "left", idleTint = idleTint
-                        ) {
-                            alignment = when (alignment) { "left" -> "center"; "center" -> "right"; else -> "left" }
-                        }
 
                         EditorTool(icon = Icons.Default.FormatClear, label = "Clear formatting", active = false, idleTint = idleTint) {
                             clearFormattingOnSelection()
@@ -991,6 +1036,57 @@ fun NoteEditorScreen(
                         modifier = Modifier.fillMaxSize()
                     )
                 }
+            }
+        }
+    }
+
+    // Paragraph style sheet — alignment + bullet/number/letter lists + indentation.
+    if (showParagraphStyleSheet) {
+        val sheetBg = if (isDarkMode) Color(0xFF282828) else Color(0xFFF2F4F8)
+        val cardBg = if (isDarkMode) Color(0xFF333333) else Color.White
+        val iconColor = if (isDarkMode) Color.White else Color(0xFF222222)
+        val labelColor = if (isDarkMode) Color(0xFF9A9A9A) else Color(0xFF777777)
+        ModalBottomSheet(onDismissRequest = { showParagraphStyleSheet = false }, containerColor = sheetBg) {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp)) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Column {
+                        Text("Paragraph style", fontSize = 21.sp, color = iconColor)
+                        Text("Alignment, lists and indentation", fontSize = 11.sp, color = labelColor)
+                    }
+                    IconButton(onClick = { showParagraphStyleSheet = false }) { Icon(Icons.Default.Close, "Close", tint = iconColor) }
+                }
+                Spacer(Modifier.height(10.dp))
+                Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(cardBg).padding(8.dp)) {
+                    Text("Alignment", fontSize = 12.sp, color = labelColor, modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp))
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        listOf("left" to Icons.Default.FormatAlignLeft, "center" to Icons.Default.FormatAlignCenter, "right" to Icons.Default.FormatAlignRight).forEach { (value, icon) ->
+                            Box(Modifier.weight(1f).height(48.dp).clip(RoundedCornerShape(10.dp)).background(if (alignment == value) CrimsonPrimary.copy(.18f) else Color.Transparent).clickable { alignment = value }, contentAlignment = Alignment.Center) {
+                                Icon(icon, value, tint = if (alignment == value) CrimsonPrimary else iconColor)
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Text("List style", fontSize = 12.sp, color = labelColor, modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp))
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        val styles = listOf("bullet" to ("•" to "Dot number"), "digit" to ("1." to "Digit number"), "letter" to ("a." to "Letter number"))
+                        styles.forEach { (value, item) ->
+                            val active = listType == value
+                            Box(Modifier.weight(1f).height(82.dp).clip(RoundedCornerShape(10.dp)).background(if (active) CrimsonPrimary.copy(.18f) else Color.Transparent).clickable { toggleParagraphList(value) }, contentAlignment = Alignment.Center) {
+                                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                                    Text(item.first, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = if (active) CrimsonPrimary else iconColor)
+                                    Spacer(Modifier.height(4.dp))
+                                    Text(item.second, fontSize = 10.sp, color = if (active) CrimsonPrimary else labelColor)
+                                }
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(onClick = { indentLines() }, modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = CrimsonPrimary.copy(.14f), contentColor = iconColor)) { Icon(Icons.Default.FormatIndentIncrease, null); Spacer(Modifier.width(6.dp)); Text("Indent") }
+                        Button(onClick = { outdentLines() }, modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = CrimsonPrimary.copy(.14f), contentColor = iconColor)) { Icon(Icons.Default.FormatIndentDecrease, null); Spacer(Modifier.width(6.dp)); Text("Outdent") }
+                    }
+                }
+                Spacer(Modifier.height(18.dp))
             }
         }
     }
@@ -1235,7 +1331,7 @@ fun NoteEditorScreen(
 private fun decorateListMarkers(base: AnnotatedString): AnnotatedString {
     val text = base.text
     if (text.isEmpty()) return base
-    val markerRegex = Regex("(?m)^([ \\t]*)(\\[ \\]|\\[x\\]|•|\\d+\\.) ")
+    val markerRegex = Regex("(?m)^([ \\t]*)(\\[ \\]|\\[x\\]|•|\\d+\\.|[A-Za-z]\\.) ")
     val lineRegex = Regex("(?m)^[ \\t]*\\[x\\] .*$")
     return androidx.compose.ui.text.buildAnnotatedString {
         append(base)

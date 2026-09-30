@@ -156,10 +156,9 @@ fun ReadNoteScreen(
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .verticalScroll(rememberScrollState())
                     .padding(horizontal = 8.dp, vertical = 10.dp)
             ) {
-                // Top Navigation Bar
+                // Fixed top navigation bar.
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -219,7 +218,39 @@ fun ReadNoteScreen(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(14.dp))
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Fixed title bar — stays pinned while the note body scrolls.
+                GlassCard(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    isDarkMode = isDarkMode,
+                    elevation = 3.dp
+                ) {
+                    Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp)) {
+                        Text(
+                            text = note.title.ifBlank { "Untitled Note" },
+                            fontSize = 21.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = if (isDarkMode) Color.White else Color(0xFF111111),
+                            maxLines = 2
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                            Text(note.category, fontSize = 10.sp, fontWeight = FontWeight.Bold, color = CrimsonPrimary)
+                            Text(dateFormatter.format(Date(note.updatedAt)), fontSize = 10.5.sp, color = if (isDarkMode) Color.White.copy(.55f) else Color.Gray)
+                        }
+                    }
+                }
+
+                // Only the note body scrolls; the navigation and title bars remain pinned.
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                        .verticalScroll(rememberScrollState())
+                ) {
+                    Spacer(modifier = Modifier.height(10.dp))
 
                 // Active Alarm Details — Item 17: note name, time, countdown,
                 // ringtone, status, and an edit (pencil) icon to reopen the dialog.
@@ -285,44 +316,8 @@ fun ReadNoteScreen(
                     elevation = 4.dp
                 ) {
                     Column(modifier = Modifier.padding(18.dp)) {
-                        // Title
-                        Text(
-                            text = note.title,
-                            fontSize = 22.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = if (isDarkMode) Color.White else Color(0xFF111111),
-                            lineHeight = 28.sp
-                        )
+                        Spacer(modifier = Modifier.height(2.dp))
 
-                        Spacer(modifier = Modifier.height(6.dp))
-
-                        // Category Badge & Date
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(6.dp))
-                                    .background(CrimsonPrimary.copy(alpha = 0.15f))
-                                    .padding(horizontal = 6.dp, vertical = 2.dp)
-                            ) {
-                                Text(
-                                    text = note.category,
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = CrimsonPrimary
-                                )
-                            }
-                            Text(
-                                text = dateFormatter.format(Date(note.updatedAt)),
-                                fontSize = 11.sp,
-                                color = if (isDarkMode) Color.White.copy(0.55f) else Color.Gray
-                            )
-                        }
-
-                        Spacer(modifier = Modifier.height(14.dp))
 
                         // Action Toolbar Card (Lock | Export | Delete | TTS | Copy)
                         GlassCard(
@@ -613,6 +608,7 @@ fun ReadNoteScreen(
                 }
             }
         }
+    }
     }
 
     if (showExportDialog) {

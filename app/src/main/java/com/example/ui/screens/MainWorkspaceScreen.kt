@@ -21,6 +21,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -52,6 +53,7 @@ import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.FolderSpecial
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LockOpen
@@ -153,6 +155,7 @@ fun MainWorkspaceScreen(
     val secQuestion by preferences.securityQuestion.collectAsState()
     val secAnswer by preferences.securityAnswer.collectAsState()
     val customFolders by preferences.customFolders.collectAsState()
+    val folderOrder by preferences.folderOrder.collectAsState()
     val hiddenFolders by preferences.hiddenFolders.collectAsState()
     val noteAlarms by preferences.noteAlarms.collectAsState()
     val blinkOnAlarmActive by preferences.blinkOnAlarmActive.collectAsState()
@@ -182,6 +185,7 @@ fun MainWorkspaceScreen(
     // Telegram Long-Press Action Sheet state (PART A Item 2)
     var longPressedNote by remember { mutableStateOf<NoteEntity?>(null) }
     var longPressedFolder by remember { mutableStateOf<String?>(null) }
+    var showFolderReorderSheet by remember { mutableStateOf(false) }
     var noteToExport by remember { mutableStateOf<NoteEntity?>(null) }
 
     // PIN lock prompt for protected notes
@@ -262,8 +266,14 @@ fun MainWorkspaceScreen(
         }
     }
 
-    val folderChips = listOf("All Notes", "Favorites", "APIs Keys", "Code", "Media", "Personal") + (customFolders - hiddenFolders)
     val systemFolderNames = setOf("All Notes", "Favorites", "APIs Keys", "Code", "Media", "Personal")
+    val folderChips = remember(folderOrder, customFolders, hiddenFolders) {
+        val all = buildList {
+            addAll(folderOrder)
+            customFolders.forEach { if (it !in this) add(it) }
+        }
+        all.distinct().filter { it !in hiddenFolders }
+    }
 
     fun exportFolderAsZip(folderName: String) {
         coroutineScope.launch(kotlinx.coroutines.Dispatchers.IO) {
@@ -492,7 +502,6 @@ fun MainWorkspaceScreen(
                             "APIs Keys" -> R.drawable.ic_vpn_api
                             "Code" -> R.drawable.ic_code_snippet
                             "Media" -> R.drawable.ic_media_play
-                            "Personal" -> R.drawable.ic_fingerprint_attachment
                             else -> R.drawable.ic_custom_folder
                         }
 
@@ -534,12 +543,21 @@ fun MainWorkspaceScreen(
                                 .padding(horizontal = 11.dp, vertical = 7.dp)
                         ) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(
-                                    painter = painterResource(folderIconRes),
-                                    contentDescription = folder,
-                                    tint = if (isSelected) Color.White else iconTint,
-                                    modifier = Modifier.size(15.dp)
-                                )
+                                if (folder == "Personal") {
+                                    Icon(
+                                        imageVector = Icons.Default.FolderSpecial,
+                                        contentDescription = folder,
+                                        tint = if (isSelected) Color.White else iconTint,
+                                        modifier = Modifier.size(15.dp)
+                                    )
+                                } else {
+                                    Icon(
+                                        painter = painterResource(folderIconRes),
+                                        contentDescription = folder,
+                                        tint = if (isSelected) Color.White else iconTint,
+                                        modifier = Modifier.size(15.dp)
+                                    )
+                                }
                                 Spacer(modifier = Modifier.width(6.dp))
                                 if (isFolderLocked) {
                                     Icon(
@@ -719,7 +737,7 @@ fun MainWorkspaceScreen(
         }
     }
 
-    // Telegram-Style Long-Press Bottom Action Sheet for Notes (PART A Item 2)
+    // Long-Press Action Sheet for Notes
     longPressedNote?.let { note ->
         ModalBottomSheet(
             onDismissRequest = { longPressedNote = null },
@@ -740,7 +758,7 @@ fun MainWorkspaceScreen(
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
-                    text = "Quick Actions (Telegram Style)",
+                    text = "Quick Actions",
                     fontSize = 11.5.sp,
                     color = Color.Gray
                 )
@@ -834,7 +852,7 @@ fun MainWorkspaceScreen(
         }
     }
 
-    // Telegram-Style Long-Press Bottom Action Sheet for Folders (PART A Item 2)
+    // Long-Press Action Sheet for Folders
     longPressedFolder?.let { folder ->
         ModalBottomSheet(
             onDismissRequest = { longPressedFolder = null },
@@ -862,8 +880,18 @@ fun MainWorkspaceScreen(
                 HorizontalDivider(color = if (isDarkMode) Color(0x22FFFFFF) else Color(0x1F000000))
                 Spacer(modifier = Modifier.height(10.dp))
 
-                // 1. Lock / Unlock Folder — unlocking always requires PIN
-                // verification; locking for the very first time forces PIN setup.
+                // Hold any folder to open this menu; Reorder gives the Telegram-like
+                // long-press-and-drag ordering flow without changing folder contents.
+                TelegramActionItem(
+                    icon = painterResource(R.drawable.ic_custom_folder),
+                    title = "Reorder Folders",
+                    isDarkMode = isDarkMode,
+                    onClick = {
+                        longPressedFolder = null
+                        showFolderReorderSheet = true
+                    }
+                )
+
                 val isLocked = preferences.isFolderLocked(folder)
                 TelegramActionItem(
                     icon = painterResource(if (isLocked) R.drawable.ic_security_unlock else R.drawable.ic_security_lock),
@@ -937,6 +965,20 @@ fun MainWorkspaceScreen(
                 Spacer(modifier = Modifier.height(20.dp))
             }
         }
+    }
+
+    // Folder reorder sheet — hold and drag a row to change the persisted folder order.
+    if (showFolderReorderSheet) {
+        FolderReorderSheet(
+            initialOrder = folderOrder + customFolders.filter { it !in folderOrder },
+            isDarkMode = isDarkMode,
+            onDismiss = { showFolderReorderSheet = false },
+            onSave = { newOrder ->
+                preferences.setFolderOrder(newOrder)
+                showFolderReorderSheet = false
+                Toast.makeText(context, "Folder order saved", Toast.LENGTH_SHORT).show()
+            }
+        )
     }
 
     // "Add Folder" dialog — Item 7
@@ -1256,7 +1298,7 @@ fun CompactNoteCard(
             val clipboard = LocalClipboardManager.current
             IconButton(
                 onClick = {
-                    clipboard.setText(androidx.compose.ui.text.AnnotatedString("${note.title}\n\n${note.content}"))
+                    clipboard.setText(androidx.compose.ui.text.AnnotatedString(note.content))
                     Toast.makeText(context, "Note content copied", Toast.LENGTH_SHORT).show()
                     onCopy()
                 },
@@ -1269,6 +1311,77 @@ fun CompactNoteCard(
                     modifier = Modifier.size(18.dp)
                 )
             }
+        }
+    }
+}
+
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
+private fun FolderReorderSheet(
+    initialOrder: List<String>,
+    isDarkMode: Boolean,
+    onDismiss: () -> Unit,
+    onSave: (List<String>) -> Unit
+) {
+    var order by remember(initialOrder) { mutableStateOf(initialOrder.distinct()) }
+    var draggingIndex by remember { mutableStateOf<Int?>(null) }
+    var dragOffset by remember { mutableStateOf(0f) }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = if (isDarkMode) Color(0xFF1E222B) else Color(0xFFF6F8FB)
+    ) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 12.dp)) {
+            Text("Reorder Folders", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = CrimsonPrimary)
+            Text("Hold a folder and drag it up or down", fontSize = 11.5.sp, color = Color.Gray)
+            Spacer(Modifier.height(12.dp))
+            LazyColumn(Modifier.fillMaxWidth().heightIn(max = 430.dp)) {
+                itemsIndexed(order, key = { _, item -> item }) { index, folder ->
+                    val isDragging = draggingIndex == index
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .graphicsLayer { translationY = if (isDragging) dragOffset else 0f; alpha = if (isDragging) 0.86f else 1f }
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(if (isDragging) CrimsonPrimary.copy(.12f) else Color.Transparent)
+                            .pointerInput(order, index) {
+                                detectDragGesturesAfterLongPress(
+                                    onDragStart = { draggingIndex = index; dragOffset = 0f },
+                                    onDragCancel = { draggingIndex = null; dragOffset = 0f },
+                                    onDragEnd = { draggingIndex = null; dragOffset = 0f },
+                                    onDrag = { change, amount ->
+                                        change.consume()
+                                        val current = draggingIndex
+                                        if (current != null) {
+                                            dragOffset += amount.y
+                                            val target = ((current * 56f + dragOffset + 28f) / 56f).toInt().coerceIn(0, order.lastIndex)
+                                            if (target != current) {
+                                                val mutable = order.toMutableList()
+                                                val moved = mutable.removeAt(current)
+                                                mutable.add(target, moved)
+                                                order = mutable
+                                                draggingIndex = target
+                                                dragOffset = 0f
+                                            }
+                                        }
+                                    }
+                                )
+                            }
+                            .padding(horizontal = 12.dp, vertical = 7.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Default.SwapVert, null, tint = if (isDragging) CrimsonPrimary else Color.Gray, modifier = Modifier.size(20.dp))
+                        Spacer(Modifier.width(10.dp))
+                        Text(folder, modifier = Modifier.weight(1f), fontSize = 14.sp, color = if (isDarkMode) Color.White else Color(0xFF222222))
+                    }
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                androidx.compose.material3.OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f)) { Text("Cancel") }
+                androidx.compose.material3.Button(onClick = { onSave(order) }, modifier = Modifier.weight(1f), colors = androidx.compose.material3.ButtonDefaults.buttonColors(containerColor = CrimsonPrimary)) { Text("Save", color = Color.White) }
+            }
+            Spacer(Modifier.height(12.dp))
         }
     }
 }

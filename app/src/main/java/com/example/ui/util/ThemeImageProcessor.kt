@@ -9,6 +9,7 @@ import android.graphics.Paint
 import android.net.Uri
 import java.io.File
 import java.io.FileOutputStream
+import kotlin.math.roundToInt
 
 /** Loading, rotating, cropping and blurring the user's wallpaper. */
 object ThemeImageProcessor {
@@ -39,15 +40,80 @@ object ThemeImageProcessor {
         return Bitmap.createBitmap(src, 0, 0, src.width, src.height, m, true)
     }
 
-    /** Cheap, smooth blur: repeated down-scale then up-scale. [amount] is 0..1. */
+    /**
+     * Smooth bitmap blur without the old aggressive down-scale/up-scale trick.
+     * The previous implementation made the wallpaper look pixelated at higher blur
+     * values because it reduced the image to a very small bitmap first. This uses
+     * three inexpensive box-blur passes at the final render resolution, which
+     * approximates a Gaussian blur while preserving image detail.
+     */
     fun blur(src: Bitmap, amount: Float): Bitmap {
         if (amount <= 0.01f) return src
-        val factor = 1f + amount * 24f
-        val w = (src.width / factor).toInt().coerceAtLeast(8)
-        val h = (src.height / factor).toInt().coerceAtLeast(8)
-        val small = Bitmap.createScaledBitmap(src, w, h, true)
-        val tiny = Bitmap.createScaledBitmap(small, (w / 2).coerceAtLeast(4), (h / 2).coerceAtLeast(4), true)
-        return Bitmap.createScaledBitmap(tiny, src.width, src.height, true)
+        val radius = (amount.coerceIn(0f, 1f) * 22f).roundToInt().coerceAtLeast(1)
+        var current = src
+        repeat(3) {
+            val next = boxBlur(current, radius)
+            if (current !== src && !current.isRecycled) current.recycle()
+            current = next
+        }
+        return current
+    }
+
+    private fun boxBlur(src: Bitmap, radius: Int): Bitmap {
+        val w = src.width
+        val h = src.height
+        if (w < 2 || h < 2) return src
+        val srcPixels = IntArray(w * h)
+        src.getPixels(srcPixels, 0, w, 0, 0, w, h)
+        val horizontal = IntArray(w * h)
+        val output = IntArray(w * h)
+        val window = radius * 2 + 1
+
+        // Horizontal pass with a sliding window.
+        for (y in 0 until h) {
+            var a = 0; var r = 0; var g = 0; var b = 0
+            for (i in -radius..radius) {
+                val x = i.coerceIn(0, w - 1)
+                val c = srcPixels[y * w + x]
+                a += c ushr 24; r += (c ushr 16) and 0xFF; g += (c ushr 8) and 0xFF; b += c and 0xFF
+            }
+            for (x in 0 until w) {
+                horizontal[y * w + x] = (a / window shl 24) or (r / window shl 16) or (g / window shl 8) or (b / window)
+                val removeX = (x - radius).coerceIn(0, w - 1)
+                val addX = (x + radius + 1).coerceIn(0, w - 1)
+                val remove = srcPixels[y * w + removeX]
+                val add = srcPixels[y * w + addX]
+                a += (add ushr 24) - (remove ushr 24)
+                r += ((add ushr 16) and 0xFF) - ((remove ushr 16) and 0xFF)
+                g += ((add ushr 8) and 0xFF) - ((remove ushr 8) and 0xFF)
+                b += (add and 0xFF) - (remove and 0xFF)
+            }
+        }
+
+        // Vertical pass.
+        for (x in 0 until w) {
+            var a = 0; var r = 0; var g = 0; var b = 0
+            for (i in -radius..radius) {
+                val y = i.coerceIn(0, h - 1)
+                val c = horizontal[y * w + x]
+                a += c ushr 24; r += (c ushr 16) and 0xFF; g += (c ushr 8) and 0xFF; b += c and 0xFF
+            }
+            for (y in 0 until h) {
+                output[y * w + x] = (a / window shl 24) or (r / window shl 16) or (g / window shl 8) or (b / window)
+                val removeY = (y - radius).coerceIn(0, h - 1)
+                val addY = (y + radius + 1).coerceIn(0, h - 1)
+                val remove = horizontal[removeY * w + x]
+                val add = horizontal[addY * w + x]
+                a += (add ushr 24) - (remove ushr 24)
+                r += ((add ushr 16) and 0xFF) - ((remove ushr 16) and 0xFF)
+                g += ((add ushr 8) and 0xFF) - ((remove ushr 8) and 0xFF)
+                b += (add and 0xFF) - (remove and 0xFF)
+            }
+        }
+
+        return Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888).also {
+            it.setPixels(output, 0, w, 0, 0, w, h)
+        }
     }
 
     /**
