@@ -421,7 +421,7 @@ fun NoteEditorScreen(
     }
 
     // ---------- Samsung-Notes-style line tools (checkbox / bullets / numbers / indent) ----------
-    val listPrefixRegex = remember { Regex("^(\\s*)(\\[ \\] |\\[x\\] |• |\\d+\\. |[A-Za-z]\\. )?(.*)$", RegexOption.DOT_MATCHES_ALL) }
+    val listPrefixRegex = remember { Regex("^(\\s*)(\\[ \\] |\\[x\\] |\\[!\\] |• |\\d+\\. |[A-Za-z]\\. |(?:[IVXLCDM]+)\\. )?(.*)$", RegexOption.DOT_MATCHES_ALL) }
 
     fun linePrefixOf(line: String): String? = listPrefixRegex.matchEntire(line)?.groupValues?.get(2)?.ifEmpty { null }
 
@@ -477,7 +477,8 @@ fun NoteEditorScreen(
             val (indent, body) = stripped(l)
             when (first) {
                 "[ ] " -> "$indent[x] $body"
-                "[x] " -> "$indent$body"
+                "[x] " -> "$indent[!] $body"
+                "[!] " -> "$indent$body"
                 else -> "$indent[ ] $body"
             }
         }
@@ -511,6 +512,25 @@ fun NoteEditorScreen(
         }
     }
 
+    fun toRoman(value: Int): String {
+        if (value <= 0) return ""
+        val pairs = listOf(1000 to "M", 900 to "CM", 500 to "D", 400 to "CD", 100 to "C", 90 to "XC", 50 to "L", 40 to "XL", 10 to "X", 9 to "IX", 5 to "V", 4 to "IV", 1 to "I")
+        var n = value
+        return buildString {
+            for ((number, symbol) in pairs) while (n >= number) { append(symbol); n -= number }
+        }
+    }
+
+    fun toggleRoman() {
+        val first = linePrefixOf(firstSelectedLine())
+        val isRoman = first?.matches(Regex("[IVXLCDM]+\\. ")) == true
+        listType = if (isRoman) "none" else "roman"
+        transformLines { l, i ->
+            val (indent, body) = stripped(l)
+            if (isRoman) "$indent$body" else "$indent${toRoman(i + 1)}. $body"
+        }
+    }
+
     fun toggleParagraphList(type: String) {
         when (type) {
             "bullet" -> {
@@ -528,6 +548,7 @@ fun NoteEditorScreen(
                 }
             }
             "letter" -> toggleLetters()
+            "roman" -> toggleRoman()
         }
     }
 
@@ -579,6 +600,17 @@ fun NoteEditorScreen(
         }
     }
 
+    fun romanToInt(value: String): Int {
+        val values = mapOf('I' to 1, 'V' to 5, 'X' to 10, 'L' to 50, 'C' to 100, 'D' to 500, 'M' to 1000)
+        var total = 0
+        var prev = 0
+        for (ch in value.reversed()) {
+            val v = values[ch] ?: 0
+            if (v < prev) total -= v else { total += v; prev = v }
+        }
+        return total
+    }
+
     /** Enter on a list line continues the list; Enter on an empty list item ends it. */
     fun continueListOnEnter(old: TextFieldValue, new: TextFieldValue): TextFieldValue {
         val oldText = old.text
@@ -601,6 +633,7 @@ fun NoteEditorScreen(
         val nextPrefix = when {
             prefix == "• " -> "• "
             prefix.startsWith("[") -> "[ ] "
+            prefix.matches(Regex("[IVXLCDM]+\\. ")) -> "${toRoman(romanToInt(prefix.dropLast(2)) + 1)}. "
             prefix.length >= 3 && prefix[0].isLetter() && prefix[1] == '.' -> {
                 val next = (prefix[0].lowercaseChar().code + 1).coerceAtMost('z'.code).toChar()
                 "$next. "
@@ -613,18 +646,16 @@ fun NoteEditorScreen(
     }
 
     val mainScrollState = rememberScrollState()
-    // Item 13: guarantees the cursor never gets hidden behind the keyboard —
-    // explicitly requests a scroll whenever the caret moves, instead of
-    // relying only on the platform's default (sometimes-late) behaviour.
+    // Keep the caret visible without fighting the parent scroll state.
+    // A single debounced bring-into-view request is used for a burst of edits;
+    // we deliberately do NOT force the whole note to maxValue. That was the
+    // source of the up/down jump when pressing Enter repeatedly.
     val contentBringIntoViewRequester = remember { BringIntoViewRequester() }
 
-    // Keep typing pinned to the caret instead of requiring manual scrolling.
-    LaunchedEffect(contentValue.text.length, contentValue.selection) {
-        if (contentValue.selection.collapsed && contentValue.selection.end >= contentValue.text.length - 1) {
-            kotlinx.coroutines.delay(60)
-            contentBringIntoViewRequester.bringIntoView()
-            mainScrollState.animateScrollTo(mainScrollState.maxValue)
-        }
+    LaunchedEffect(contentValue.selection, contentValue.text.length) {
+        if (!contentValue.selection.collapsed) return@LaunchedEffect
+        kotlinx.coroutines.delay(90)
+        contentBringIntoViewRequester.bringIntoView()
     }
 
     // DAY MODE CONTRAST FIX: Default text color in Day mode is dark (Color(0xFF111111))
@@ -842,6 +873,17 @@ fun NoteEditorScreen(
                         Spacer(modifier = Modifier.height(14.dp))
                     }
 
+                    fun syncListTypeFromEditor() {
+                        val prefix = linePrefixOf(firstSelectedLine())
+                        listType = when {
+                            prefix == "• " -> "bullet"
+                            prefix?.matches(Regex("\\d+\\. ")) == true -> "digit"
+                            prefix?.matches(Regex("[A-Za-z]\\. ")) == true -> "letter"
+                            prefix?.matches(Regex("[IVXLCDM]+\\. ")) == true -> "roman"
+                            else -> "none"
+                        }
+                    }
+
                     // Main Content Input (Day Mode text contrast fix & Auto-Scroll buffer)
                     BasicTextField(
                         value = contentValue,
@@ -877,8 +919,9 @@ fun NoteEditorScreen(
                                 }
                             }
                             contentValue = newVal
-                            // Item 13: keep the caret visible above the keyboard on every edit.
-                            coroutineScope.launch { contentBringIntoViewRequester.bringIntoView() }
+                            syncListTypeFromEditor()
+                            // Auto-scroll is coordinated by the debounced LaunchedEffect above.
+                            // Do not launch a second scroll request for every keystroke.
                         },
                         visualTransformation = VisualTransformation { text ->
                             TransformedText(
@@ -924,9 +967,8 @@ fun NoteEditorScreen(
                             .heightIn(min = 260.dp)
                             .bringIntoViewRequester(contentBringIntoViewRequester)
                             .onFocusEvent {
-                                if (it.isFocused) {
-                                    coroutineScope.launch { contentBringIntoViewRequester.bringIntoView() }
-                                }
+                                // Initial focus is handled by the same debounced selection effect;
+                                // avoid competing scroll animations here.
                             }
                     )
 
@@ -975,20 +1017,27 @@ fun NoteEditorScreen(
 
                         ToolDivider(isDarkMode)
 
-                        EditorTool(icon = Icons.Default.Code, label = "Code", active = isCodeFormat, idleTint = idleTint) { isCodeFormat = !isCodeFormat }
-
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
+                        // Three-state checkbox tool: empty → checked → crossed → empty.
+                        val checkboxPrefix = linePrefixOf(firstSelectedLine())
+                        val checkboxState = when (checkboxPrefix) {
+                            "[x] " -> 1
+                            "[!] " -> 2
+                            else -> 0
+                        }
+                        Box(
                             modifier = Modifier
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(if (isJsonMode) CrimsonPrimary.copy(alpha = 0.18f) else Color.Transparent)
-                                .clickable { isJsonMode = !isJsonMode }
-                                .padding(horizontal = 10.dp, vertical = 10.dp)
+                                .size(42.dp)
+                                .clip(RoundedCornerShape(9.dp))
+                                .border(1.5.dp, if (checkboxState == 1) Color(0xFF35B65B) else if (checkboxState == 2) Color(0xFFE05252) else idleTint.copy(alpha = .55f), RoundedCornerShape(9.dp))
+                                .background(if (checkboxState == 1) Color(0xFF35B65B).copy(.16f) else if (checkboxState == 2) Color(0xFFE05252).copy(.16f) else Color.Transparent)
+                                .clickable { toggleCheckbox() },
+                            contentAlignment = Alignment.Center
                         ) {
-                            Text(
-                                text = "JSON", fontSize = 12.sp, fontWeight = FontWeight.Bold,
-                                color = if (isJsonMode) CrimsonPrimary else Color.Gray
-                            )
+                            when (checkboxState) {
+                                1 -> Icon(Icons.Default.Check, "Checked", tint = Color(0xFF35B65B), modifier = Modifier.size(20.dp))
+                                2 -> Icon(Icons.Default.Close, "Crossed", tint = Color(0xFFE05252), modifier = Modifier.size(20.dp))
+                                else -> Unit
+                            }
                         }
 
                         ToolDivider(isDarkMode)
@@ -1068,7 +1117,12 @@ fun NoteEditorScreen(
                     Spacer(Modifier.height(8.dp))
                     Text("List style", fontSize = 12.sp, color = labelColor, modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp))
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                        val styles = listOf("bullet" to ("•" to "Dot number"), "digit" to ("1." to "Digit number"), "letter" to ("a." to "Letter number"))
+                        val styles = listOf(
+                            "bullet" to ("•" to "Dot"),
+                            "digit" to ("1." to "Digit"),
+                            "letter" to ("a." to "Letter"),
+                            "roman" to ("IV." to "Roman")
+                        )
                         styles.forEach { (value, item) ->
                             val active = listType == value
                             Box(Modifier.weight(1f).height(82.dp).clip(RoundedCornerShape(10.dp)).background(if (active) CrimsonPrimary.copy(.18f) else Color.Transparent).clickable { toggleParagraphList(value) }, contentAlignment = Alignment.Center) {
