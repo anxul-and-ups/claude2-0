@@ -769,7 +769,7 @@ fun MainWorkspaceScreen(
                                 MutableTransitionState(false).apply { targetState = true }
                             }
                             val staggerDelay = index.coerceAtMost(8) * 60
-                            AnimatedVisibility(
+                            androidx.compose.animation.AnimatedVisibility(
                                 visibleState = enterState,
                                 enter = fadeIn(tween(350, delayMillis = staggerDelay)) +
                                     slideInVertically(
