@@ -117,8 +117,9 @@ object NoteExporter {
         note.tableData.lines().filter { it.isNotBlank() }.map { row -> row.split("|").map { it.trim() }.filter { it.isNotEmpty() } }
 
     private fun buildPlainText(note: NoteEntity): String {
+        // (marker lines like [img:abc123] are layout data, never exported as text)
         val sb = StringBuilder()
-        sb.append(note.title).append("\n==================\n").append(note.content)
+        sb.append(note.title).append("\n==================\n").append(ImageMarkers.strip(note.content))
         val rows = tableRows(note)
         if (rows.isNotEmpty()) {
             sb.append("\n\n[Table]\n")
@@ -139,7 +140,7 @@ object NoteExporter {
             put("title", note.title)
             put("category", note.category)
             put("folder", note.folder)
-            put("content", note.content)
+            put("content", ImageMarkers.strip(note.content))
             put("table", JSONArray(tableRows(note).map { JSONArray(it) }))
             put("attachments", JSONArray(attachments.map { it.fileName }))
         }.toString(2)
@@ -151,7 +152,7 @@ object NoteExporter {
         val sb = StringBuilder("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<note>\n")
         sb.append("  <title>").append(xmlEscape(note.title)).append("</title>\n")
         sb.append("  <category>").append(xmlEscape(note.category)).append("</category>\n")
-        sb.append("  <content>").append(xmlEscape(note.content)).append("</content>\n")
+        sb.append("  <content>").append(xmlEscape(ImageMarkers.strip(note.content))).append("</content>\n")
         tableRows(note).forEach { r ->
             sb.append("  <row>").append(r.joinToString("") { "<cell>${xmlEscape(it)}</cell>" }).append("</row>\n")
         }
@@ -164,7 +165,7 @@ object NoteExporter {
     private fun buildHtml(note: NoteEntity): String {
         val spans = RichTextFormatter.deserializeSpans(note.styleSpansJson)
         val body = StringBuilder()
-        val text = note.content
+        val text = ImageMarkers.blank(note.content)
         // Split at every span boundary so styles nest correctly per segment.
         val cuts = (spans.flatMap { listOf(it.start, it.end) } + listOf(0, text.length))
             .map { it.coerceIn(0, text.length) }.distinct().sorted()
@@ -273,7 +274,7 @@ object NoteExporter {
     }
 
     private fun buildSpannable(note: NoteEntity): SpannableStringBuilder {
-        val text = note.content
+        val text = ImageMarkers.blank(note.content)
         val sp = SpannableStringBuilder(text)
         val flag = Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
         RichTextFormatter.deserializeSpans(note.styleSpansJson).forEach { span ->
@@ -324,6 +325,28 @@ object NoteExporter {
         StaticLayout.Builder.obtain(text, 0, text.length, paint, width)
             .setLineSpacing(3f, 1f).setIncludePad(false).setAlignment(Layout.Alignment.ALIGN_NORMAL).build()
 
+    /**
+     * Draws one image at the current position with its saved edit (rotation, crop, zoom, offset)
+     * and its saved size (fraction of the page's content width).
+     */
+    private fun drawImageAt(pager: Pager, att: RichTextFormatter.AttachmentInfo, paint: TextPaint, cw: Int) {
+        pager.y += 6f
+        val maxH = pager.bottom - MARGIN
+        var w = pager.contentW * att.widthFraction.coerceIn(0.2f, 1f)
+        var h = AttachmentRenderer.frameHeightPx(att, w)
+        if (h > maxH) { w *= maxH / h; h = maxH }
+        val bmp = AttachmentRenderer.frameBitmap(att, (w * 2).toInt().coerceIn(200, 2400))
+        if (bmp == null) {
+            drawLayout(pager, makeLayout("[Image could not be loaded: ${att.fileName}]", paint, cw), MARGIN)
+            return
+        }
+        pager.ensure(h)
+        val left = MARGIN + (pager.contentW - w) / 2f * 0f // images are left-aligned like in the editor
+        pager.canvas!!.drawBitmap(bmp, null, android.graphics.RectF(left, pager.y, left + w, pager.y + h),
+            Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG))
+        pager.y += h + 6f
+    }
+
     private fun writePdf(note: NoteEntity, target: File) {
         val pager = Pager()
         pager.newPage()
@@ -341,10 +364,39 @@ object NoteExporter {
         val bodyPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
             color = AColor.rgb(25, 25, 25); textSize = note.fontSize.coerceIn(9, 28).toFloat() * 0.8f
         }
+        val allAtts = RichTextFormatter.deserializeAttachments(note.attachmentsJson)
+        val placedInline = HashSet<String>()
         if (note.content.isNotEmpty()) {
             val body = buildSpannable(note)
             if (note.isCodeFormat) body.setSpan(TypefaceSpan("monospace"), 0, body.length, Spanned.SPAN_INCLUSIVE_INCLUSIVE)
-            drawLayout(pager, makeLayout(body, bodyPaint, cw), MARGIN)
+
+            // Walk the note line by line: ordinary text is drawn as one block (styles kept), every
+            // "[img:id]" line draws its picture HERE, so the PDF mirrors the editor's order.
+            val lines = note.content.split("\n")
+            var offset = 0
+            var segStart = 0
+            fun flushText(endExclusive: Int) {
+                var a = segStart
+                var b = endExclusive
+                // trim the line break that separated text from the image
+                if (b > a && b <= body.length && body[b - 1] == '\n') b--
+                if (b > a) drawLayout(pager, makeLayout(body.subSequence(a, b), bodyPaint, cw), MARGIN)
+            }
+            for (line in lines) {
+                val lineStart = offset
+                val lineEnd = offset + line.length
+                val id = ImageMarkers.idOf(line)
+                if (id != null) {
+                    flushText(lineStart)
+                    val att = allAtts.firstOrNull { it.id == id }
+                    if (att != null) { placedInline.add(id); drawImageAt(pager, att, bodyPaint, cw) }
+                    segStart = (lineEnd + 1).coerceAtMost(body.length)
+                }
+                offset = lineEnd + 1
+            }
+            if (segStart < body.length) {
+                drawLayout(pager, makeLayout(body.subSequence(segStart, body.length), bodyPaint, cw), MARGIN)
+            }
         }
 
         // Table
@@ -354,23 +406,15 @@ object NoteExporter {
             drawTable(pager, rows, cw)
         }
 
-        // Images / attachments, each embedded at real resolution (scaled to fit the page).
-        RichTextFormatter.deserializeAttachments(note.attachmentsJson).forEach { att ->
+        // Remaining attachments (legacy notes without inline position, or non-image files).
+        allAtts.forEach { att ->
+            if (att.id.isNotBlank() && att.mimeType.startsWith("image/")) {
+                // inline images without a marker line (deleted from the text) are not exported
+                return@forEach
+            }
             pager.y += 12f
             if (att.mimeType.startsWith("image/")) {
-                val bmp = decodeScaled(att.uri, 1600)
-                if (bmp != null) {
-                    val maxH = pager.bottom - MARGIN
-                    var w = pager.contentW
-                    var h = bmp.height * (w / bmp.width)
-                    if (h > maxH) { h = maxH; w = bmp.width * (h / bmp.height) }
-                    pager.ensure(h)
-                    val dst = android.graphics.RectF(MARGIN, pager.y, MARGIN + w, pager.y + h)
-                    pager.canvas!!.drawBitmap(bmp, null, dst, Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG))
-                    pager.y += h
-                } else {
-                    drawLayout(pager, makeLayout("[Image could not be loaded: ${att.fileName}]", bodyPaint, cw), MARGIN)
-                }
+                drawImageAt(pager, att, bodyPaint, cw)
             } else {
                 drawLayout(pager, makeLayout("Attachment: ${att.fileName}", bodyPaint, cw), MARGIN)
             }
@@ -410,7 +454,7 @@ object NoteExporter {
 
     private fun writeDocx(note: NoteEntity, target: File) {
         val spans = RichTextFormatter.deserializeSpans(note.styleSpansJson)
-        val text = note.content
+        val text = ImageMarkers.blank(note.content)
         val body = StringBuilder()
 
         // Title

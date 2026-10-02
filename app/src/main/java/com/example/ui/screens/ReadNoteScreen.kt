@@ -49,6 +49,8 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedTextField
@@ -121,9 +123,11 @@ fun ReadNoteScreen(
     val noteAlarms by preferences.noteAlarms.collectAsState()
     val activeAlarm = noteAlarms[note.id]
 
-    val attachments = remember(note.attachmentsJson) {
+    val allAttachments = remember(note.attachmentsJson) {
         RichTextFormatter.deserializeAttachments(note.attachmentsJson)
     }
+    // Inline images are drawn inside the text (at their "[img:id]" line); only the rest is a gallery.
+    val attachments = remember(allAttachments) { allAttachments.filter { it.id.isBlank() } }
 
     val spans = remember(note.styleSpansJson) {
         RichTextFormatter.deserializeSpans(note.styleSpansJson)
@@ -422,7 +426,7 @@ fun ReadNoteScreen(
                                                 tts?.stop()
                                                 isSpeaking = false
                                             } else {
-                                                val toSpeak = "${note.title}. ${note.content}"
+                                                val toSpeak = "${note.title}. ${com.example.ui.util.ImageMarkers.strip(note.content)}"
                                                 tts?.speak(toSpeak, TextToSpeech.QUEUE_FLUSH, null, "NoteTTS")
                                                 isSpeaking = true
                                             }
@@ -450,7 +454,7 @@ fun ReadNoteScreen(
                                     verticalAlignment = Alignment.CenterVertically,
                                     modifier = Modifier
                                         .clickable {
-                                            clipboard.setText(AnnotatedString(note.content))
+                                            clipboard.setText(AnnotatedString(com.example.ui.util.ImageMarkers.strip(note.content)))
                                             Toast.makeText(context, "Note copied to clipboard", Toast.LENGTH_SHORT).show()
                                         }
                                         .padding(4.dp)
@@ -494,14 +498,10 @@ fun ReadNoteScreen(
                                             elevation = 2.dp
                                         ) {
                                             Column(modifier = Modifier.padding(8.dp)) {
-                                                AsyncImage(
-                                                    model = File(attachment.uri),
-                                                    contentDescription = attachment.fileName,
-                                                    contentScale = ContentScale.Crop,
-                                                    modifier = Modifier
-                                                        .fillMaxWidth()
-                                                        .heightIn(max = 240.dp)
-                                                        .clip(RoundedCornerShape(8.dp))
+                                                com.example.ui.components.AttachmentFrame(
+                                                    att = attachment,
+                                                    modifier = Modifier.fillMaxWidth(attachment.widthFraction),
+                                                    cornerRadius = 8
                                                 )
                                                 Spacer(modifier = Modifier.height(4.dp))
                                                 Text(
@@ -584,12 +584,27 @@ fun ReadNoteScreen(
                                 }
                             }
 
-                            Text(
-                                text = styledText,
-                                fontSize = note.fontSize.sp,
-                                color = currentFontColor,
-                                lineHeight = (note.fontSize + 6).sp
-                            )
+                            val hasRichLines = remember(displayContent) {
+                                displayContent.contains("[img:") ||
+                                    Regex("(?m)^[ \\t]*\\[( |x|!)] ").containsMatchIn(displayContent)
+                            }
+                            if (!hasRichLines) {
+                                Text(
+                                    text = styledText,
+                                    fontSize = note.fontSize.sp,
+                                    color = currentFontColor,
+                                    lineHeight = (note.fontSize + 6).sp
+                                )
+                            } else {
+                                ReadRichBody(
+                                    content = displayContent,
+                                    styled = styledText,
+                                    attachments = allAttachments,
+                                    fontSize = note.fontSize,
+                                    color = currentFontColor,
+                                    isDarkMode = isDarkMode
+                                )
+                            }
                         }
 
                         // Render Table if table data exists
@@ -954,6 +969,105 @@ fun RenderTable(tableData: String, isDarkMode: Boolean) {
                             )
                         }
                     }
+                }
+            }
+        }
+    }
+}
+
+
+/**
+ * Read-mode body for notes containing checkbox lines or inline images. Plain lines stay grouped in
+ * one Text (keeping all styling); checkbox lines get a real box; "[img:id]" lines draw the picture
+ * with its saved size / crop / rotation / zoom.
+ */
+@Composable
+private fun ReadRichBody(
+    content: String,
+    styled: AnnotatedString,
+    attachments: List<RichTextFormatter.AttachmentInfo>,
+    fontSize: Int,
+    color: Color,
+    isDarkMode: Boolean
+) {
+    val checkRegex = remember { Regex("^([ \\t]*)(\\[ ]|\\[x]|\\[!]) (.*)$") }
+    val lines = content.split("\n")
+    // absolute start offset of every line inside [content]
+    val starts = IntArray(lines.size)
+    var acc = 0
+    lines.forEachIndexed { i, l -> starts[i] = acc; acc += l.length + 1 }
+
+    var i = 0
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        while (i < lines.size) {
+            val imgId = com.example.ui.util.ImageMarkers.idOf(lines[i])
+            val check = checkRegex.matchEntire(lines[i])
+            when {
+                imgId != null -> {
+                    val att = attachments.firstOrNull { it.id == imgId }
+                    if (att != null) {
+                        Spacer(Modifier.height(6.dp))
+                        com.example.ui.components.AttachmentFrame(
+                            att = att,
+                            modifier = Modifier.fillMaxWidth(att.widthFraction)
+                        )
+                        Spacer(Modifier.height(6.dp))
+                    }
+                    i++
+                }
+                check != null -> {
+                    val state = check.groupValues[2]
+                    val bodyStart = starts[i] + check.groupValues[1].length + 4
+                    val bodyEnd = starts[i] + lines[i].length
+                    val tint = when (state) {
+                        "[x]" -> Color(0xFF35B65B)
+                        "[!]" -> Color(0xFFE05252)
+                        else -> if (isDarkMode) Color.White.copy(.75f) else Color(0xFF555555)
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(18.dp)
+                                .clip(RoundedCornerShape(4.dp))
+                                .background(if (state == "[ ]") Color.Transparent else tint.copy(alpha = .18f))
+                                .border(1.6.dp, tint, RoundedCornerShape(4.dp)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            when (state) {
+                                "[x]" -> Icon(Icons.Default.Check, null, tint = tint, modifier = Modifier.size(14.dp))
+                                "[!]" -> Icon(Icons.Default.Close, null, tint = tint, modifier = Modifier.size(14.dp))
+                                else -> Unit
+                            }
+                        }
+                        Spacer(Modifier.width(10.dp))
+                        Text(
+                            text = if (bodyStart <= bodyEnd && bodyEnd <= styled.length) styled.subSequence(bodyStart, bodyEnd) else AnnotatedString(check.groupValues[3]),
+                            fontSize = fontSize.sp,
+                            color = if (state == "[x]") Color.Gray else color,
+                            textDecoration = if (state == "[x]") androidx.compose.ui.text.style.TextDecoration.LineThrough else null,
+                            lineHeight = (fontSize + 6).sp
+                        )
+                    }
+                    i++
+                }
+                else -> {
+                    // group consecutive plain lines into one Text so styling/wrapping stay natural
+                    var j = i
+                    while (j < lines.size &&
+                        com.example.ui.util.ImageMarkers.idOf(lines[j]) == null &&
+                        !checkRegex.matches(lines[j])
+                    ) j++
+                    val from = starts[i]
+                    val to = (starts[j - 1] + lines[j - 1].length).coerceAtMost(styled.length)
+                    if (from <= to) {
+                        Text(
+                            text = styled.subSequence(from, to),
+                            fontSize = fontSize.sp,
+                            color = color,
+                            lineHeight = (fontSize + 6).sp
+                        )
+                    }
+                    i = j
                 }
             }
         }

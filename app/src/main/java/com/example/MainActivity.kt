@@ -19,6 +19,7 @@ import com.example.ui.components.LocalAppBackdrop
 import com.example.ui.screens.SecuritySettingsScreen
 import com.example.ui.screens.ThemeSettingsScreen
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.animation.togetherWith
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.runtime.LaunchedEffect
@@ -237,7 +238,43 @@ fun AuNotesApp(
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        when (val screen = currentScreen) {
+        // Screen-to-screen transitions: fade + gentle slide + subtle scale on springs. Forward
+        // navigation enters from the right, going back to the main screen enters from the left.
+        // Typing, caret scrolling and folder switching never touch this — it only reacts to a
+        // change of the top-level screen.
+        androidx.compose.animation.AnimatedContent(
+            targetState = currentScreen,
+            contentKey = { it::class },
+            transitionSpec = {
+                val toMain = targetState is Screen.MainWorkspace
+                val splash = initialState is Screen.Splash || targetState is Screen.Splash
+                if (splash) {
+                    androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(350)) togetherWith
+                        androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(250))
+                } else {
+                    val dir = if (toMain) -1 else 1
+                    (androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(240, delayMillis = 40)) +
+                        androidx.compose.animation.slideInHorizontally(
+                            animationSpec = androidx.compose.animation.core.spring(
+                                dampingRatio = androidx.compose.animation.core.Spring.DampingRatioNoBouncy,
+                                stiffness = androidx.compose.animation.core.Spring.StiffnessMediumLow
+                            ),
+                            initialOffsetX = { full -> dir * full / 8 }
+                        ) +
+                        androidx.compose.animation.scaleIn(
+                            initialScale = 0.96f,
+                            animationSpec = androidx.compose.animation.core.tween(280)
+                        )) togetherWith
+                        (androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(160)) +
+                            androidx.compose.animation.slideOutHorizontally(
+                                animationSpec = androidx.compose.animation.core.tween(220),
+                                targetOffsetX = { full -> -dir * full / 12 }
+                            ))
+                }
+            },
+            label = "screen_transition"
+        ) { screen ->
+        when (screen) {
             is Screen.Splash -> {
                 SplashScreen(
                     isDarkMode = isDarkMode,
@@ -313,7 +350,7 @@ fun AuNotesApp(
                     onOpenTableEditor = { initialData, onResult ->
                         currentScreen = Screen.TableEditor(initialData, onResult)
                     },
-                    onSaveNote = { id, title, content, category, isBold, isItalic, isUnderline, isStrikethrough, isCodeFormat, fontSize, fontColorHex, alignment, listType, tableData, styleSpansJson, attachmentsJson, onSaved ->
+                    onSaveNote = { id, title, content, category, isBold, isItalic, isUnderline, isStrikethrough, isCodeFormat, fontSize, fontColorHex, alignment, listType, tableData, styleSpansJson, attachmentsJson, chosenFolder, onSaved ->
                         coroutineScope.launch {
                             val finalTitle = title.ifBlank { "Untitled Note" }
                             val existing = screen.note
@@ -323,7 +360,13 @@ fun AuNotesApp(
                                 "Media" -> "Media"
                                 "Personal" -> "Personal"
                                 else -> existing?.folder ?: "All Notes"
-                            }.let { if (existing?.isHidden == true) existing.folder else it }
+                            }.let { auto ->
+                                when {
+                                    existing?.isHidden == true -> existing.folder // never move a hidden note out of the vault
+                                    chosenFolder.isNotBlank() -> chosenFolder      // explicit "Save in" choice
+                                    else -> auto
+                                }
+                            }
                             val entity = NoteEntity(
                                 id = id,
                                 title = finalTitle,
@@ -485,6 +528,7 @@ fun AuNotesApp(
                     onClose = { currentScreen = screen.returnTo }
                 )
             }
+        }
         }
 
         pendingDeleteNoteId?.let { noteId ->

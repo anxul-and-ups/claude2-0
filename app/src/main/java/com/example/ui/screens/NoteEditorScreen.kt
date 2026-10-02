@@ -55,6 +55,9 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Alarm
 import androidx.compose.material.icons.filled.AlarmAdd
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.CheckBoxOutlineBlank
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Crop
@@ -116,6 +119,9 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.focus.onFocusEvent
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
@@ -159,6 +165,12 @@ import com.example.ui.components.NeuIconButton
 import com.example.ui.theme.CrimsonPrimary
 import com.example.ui.util.AlarmScheduler
 import com.example.ui.util.AttachmentStorage
+import com.example.ui.util.AttachmentRenderer
+import com.example.ui.util.ImageMarkers
+import com.example.ui.components.AttachmentFrame
+import com.example.ui.components.ImageEditorDialog
+import androidx.compose.ui.text.ParagraphStyle
+import androidx.compose.ui.layout.onSizeChanged
 import com.example.ui.util.DeviceAudioFile
 import com.example.ui.util.RichTextFormatter
 import com.example.ui.util.SystemRingtoneItem
@@ -199,6 +211,7 @@ fun NoteEditorScreen(
         tableData: String,
         styleSpansJson: String,
         attachmentsJson: String,
+        folder: String,
         onSaved: (Long) -> Unit
     ) -> Unit
 ) {
@@ -290,6 +303,14 @@ fun NoteEditorScreen(
     var isCodeFormat by remember { mutableStateOf(initialNote?.isCodeFormat ?: false) }
     var showFormatSheet by remember { mutableStateOf(false) }
     var showParagraphStyleSheet by remember { mutableStateOf(false) }
+    // "Save in": null = automatic (old behaviour), otherwise the folder the user picked
+    var saveInChoice by remember { mutableStateOf<String?>(null) }
+    var showSaveInMenu by remember { mutableStateOf(false) }
+    val customFoldersList by preferences.customFolders.collectAsState()
+    val hiddenFoldersSet by preferences.hiddenFolders.collectAsState()
+    var textLayout by remember { mutableStateOf<TextLayoutResult?>(null) }
+    var fieldWidthPx by remember { mutableFloatStateOf(0f) }
+    val density = LocalDensity.current
     var isJsonMode by remember { mutableStateOf(false) }
 
     var fontSize by remember { mutableStateOf(initialNote?.fontSize ?: 16) }
@@ -325,7 +346,32 @@ fun NoteEditorScreen(
                 val info = AttachmentStorage.copyToAppStorage(context, uri)
                 withContext(Dispatchers.Main) {
                     if (info != null) {
-                        attachments = attachments + info
+                        // Images sit INLINE: a "[img:id]" line at the caret holds the picture, so its
+                        // place in the note (and in the exported PDF) is exactly where it was inserted.
+                        val id = ImageMarkers.newId()
+                        val isImage = info.mimeType.startsWith("image/")
+                        val stored = if (isImage) info.copy(id = id, order = attachments.size) else info
+                        attachments = attachments + stored
+                        if (isImage) {
+                            val text = contentValue.text
+                            val pos = contentValue.selection.max.coerceIn(0, text.length)
+                            val lineStart = text.lastIndexOf('\n', pos - 1) + 1
+                            val lineEnd = text.indexOf('\n', pos).let { if (it < 0) text.length else it }
+                            val marker = ImageMarkers.marker(id)
+                            val line = text.substring(lineStart, lineEnd)
+                            val newText: String
+                            val caret: Int
+                            if (line.isBlank()) {
+                                val tail = if (lineEnd >= text.length) "\n" else ""
+                                newText = text.substring(0, lineStart) + marker + tail + text.substring(lineEnd)
+                                caret = lineStart + marker.length + 1
+                            } else {
+                                newText = text.substring(0, lineEnd) + "\n" + marker + "\n" + text.substring(lineEnd)
+                                caret = lineEnd + 1 + marker.length + 1
+                            }
+                            spans = RichTextFormatter.adjustSpansForEdit(spans, text, newText)
+                            contentValue = TextFieldValue(newText, selection = TextRange(caret.coerceAtMost(newText.length)))
+                        }
                         Toast.makeText(context, "Image added to Note!", Toast.LENGTH_SHORT).show()
                     }
                 }
@@ -338,10 +384,12 @@ fun NoteEditorScreen(
             if (thenNavigateBack) onBack()
             return
         }
-        val autoCat = if (selectedCategory == "Normal") {
-            AutoClassifier.detectCategory(title, contentValue.text)
-        } else {
-            selectedCategory
+        val systemFolderCategory = mapOf("APIs Keys" to "API", "Code" to "Code", "Media" to "Media", "Personal" to "Personal")
+        val autoCat = when {
+            // Picking a built-in folder files the note there (those folders filter by category)
+            saveInChoice != null && systemFolderCategory.containsKey(saveInChoice) -> systemFolderCategory.getValue(saveInChoice!!)
+            selectedCategory == "Normal" -> AutoClassifier.detectCategory(title, contentValue.text)
+            else -> selectedCategory
         }
 
         onSaveNote(
@@ -360,7 +408,8 @@ fun NoteEditorScreen(
             listType,
             tableData,
             RichTextFormatter.serializeSpans(spans),
-            RichTextFormatter.serializeAttachments(attachments)
+            RichTextFormatter.serializeAttachments(attachments),
+            saveInChoice.orEmpty()
         ) { savedId ->
             currentNoteId = savedId
             hasUnsavedChanges = false
@@ -375,7 +424,7 @@ fun NoteEditorScreen(
     LaunchedEffect(
         title, contentValue.text, spans, tableData, attachments,
         isBold, isItalic, isUnderline, isStrikethrough, isCodeFormat,
-        fontSize, selectedColorHex, alignment, listType
+        fontSize, selectedColorHex, alignment, listType, saveInChoice
     ) {
         hasUnsavedChanges = true
         kotlinx.coroutines.delay(1200)
@@ -471,44 +520,47 @@ fun NoteEditorScreen(
         return if (m == null) "" to line else m.groupValues[1] to m.groupValues[3]
     }
 
-    fun toggleCheckbox() {
-        val first = linePrefixOf(firstSelectedLine())
-        transformLines { l, _ ->
-            val (indent, body) = stripped(l)
-            when (first) {
-                "[ ] " -> "$indent[x] $body"
-                "[x] " -> "$indent[!] $body"
-                "[!] " -> "$indent$body"
-                else -> "$indent[ ] $body"
-            }
+    /** Inserts exactly ONE new checkbox line per call (toolbar tap). */
+    fun insertCheckbox() {
+        val text = contentValue.text
+        val pos = contentValue.selection.max.coerceIn(0, text.length)
+        val lineStart = text.lastIndexOf('\n', pos - 1) + 1
+        val lineEnd = text.indexOf('\n', pos).let { if (it < 0) text.length else it }
+        val line = text.substring(lineStart, lineEnd)
+        pushUndo()
+        val newText: String
+        val caret: Int
+        if (line.isBlank()) {
+            newText = text.substring(0, lineStart) + "[ ] " + text.substring(lineEnd)
+            caret = lineStart + 4
+        } else {
+            val indent = line.takeWhile { it == ' ' }
+            newText = text.substring(0, lineEnd) + "\n" + indent + "[ ] " + text.substring(lineEnd)
+            caret = lineEnd + 1 + indent.length + 4
         }
+        spans = RichTextFormatter.adjustSpansForEdit(spans, text, newText)
+        contentValue = TextFieldValue(newText, selection = TextRange(caret))
     }
 
-    fun toggleBullets() {
-        val first = linePrefixOf(firstSelectedLine())
-        transformLines { l, _ ->
-            val (indent, body) = stripped(l)
-            if (first == "• ") "$indent$body" else "$indent• $body"
+    /** Tapping the box inside the note: empty -> checked -> crossed -> empty. */
+    fun cycleCheckboxAt(markerStart: Int) {
+        val text = contentValue.text
+        if (markerStart < 0 || markerStart + 3 > text.length) return
+        val next = when (text.substring(markerStart, markerStart + 3)) {
+            "[ ]" -> "[x]"
+            "[x]" -> "[!]"
+            "[!]" -> "[ ]"
+            else -> return
         }
+        pushUndo()
+        contentValue = contentValue.copy(text = text.substring(0, markerStart) + next + text.substring(markerStart + 3))
     }
 
-    fun toggleNumbers() {
-        val first = linePrefixOf(firstSelectedLine())
-        val isNumbered = first != null && first.first().isDigit()
-        listType = if (isNumbered) "none" else "digit"
-        transformLines { l, i ->
-            val (indent, body) = stripped(l)
-            if (isNumbered) "$indent$body" else "$indent${i + 1}. $body"
-        }
-    }
-
-    fun toggleLetters() {
-        val first = linePrefixOf(firstSelectedLine())
-        val isLettered = first != null && first.length >= 2 && first[0].isLetter() && first[1] == '.'
+    fun toggleLetters(isLettered: Boolean) {
         listType = if (isLettered) "none" else "letter"
         transformLines { l, i ->
             val (indent, body) = stripped(l)
-            if (isLettered) "$indent$body" else "$indent${('a'.code + i).coerceAtMost('z'.code).toChar()}. $body"
+            if (isLettered) "$indent$body" else "$indent${('A'.code + i).coerceAtMost('Z'.code).toChar()}. $body"
         }
     }
 
@@ -521,9 +573,7 @@ fun NoteEditorScreen(
         }
     }
 
-    fun toggleRoman() {
-        val first = linePrefixOf(firstSelectedLine())
-        val isRoman = first?.matches(Regex("[IVXLCDM]+\\. ")) == true
+    fun toggleRoman(isRoman: Boolean) {
         listType = if (isRoman) "none" else "roman"
         transformLines { l, i ->
             val (indent, body) = stripped(l)
@@ -531,24 +581,20 @@ fun NoteEditorScreen(
         }
     }
 
-    fun toggleParagraphList(type: String) {
+    /** [activeKind] is the list kind of the caret line; tapping the active style again removes it. */
+    fun toggleParagraphList(type: String, activeKind: String) {
+        val wasActive = activeKind == type
         when (type) {
-            "bullet" -> {
-                listType = if (linePrefixOf(firstSelectedLine()) == "• ") "none" else "bullet"
-                toggleBullets()
+            "bullet" -> transformLines { l, _ ->
+                val (indent, body) = stripped(l)
+                if (wasActive) "$indent$body" else "$indent• $body"
             }
-            "digit" -> {
-                val first = linePrefixOf(firstSelectedLine())
-                if (first != null && first.firstOrNull()?.isDigit() == true) {
-                    listType = "none"
-                    transformLines { l, _ -> val (indent, body) = stripped(l); "$indent$body" }
-                } else {
-                    listType = "digit"
-                    transformLines { l, i -> val (indent, body) = stripped(l); "$indent${i + 1}. $body" }
-                }
+            "digit" -> transformLines { l, i ->
+                val (indent, body) = stripped(l)
+                if (wasActive) "$indent$body" else "$indent${i + 1}. $body"
             }
-            "letter" -> toggleLetters()
-            "roman" -> toggleRoman()
+            "letter" -> toggleLetters(wasActive)
+            "roman" -> toggleRoman(wasActive)
         }
     }
 
@@ -611,6 +657,47 @@ fun NoteEditorScreen(
         return total
     }
 
+    /**
+     * Which kind of list is the line starting at [lineStart] in? Letters and roman numerals
+     * share symbols (C, D, I, L, M, V, X), so ambiguous single-character markers are decided by
+     * the item above: "H." then "I." is a letter list, "I." then "II." is roman.
+     */
+    fun resolveListKind(text: String, lineStart: Int, depth: Int = 0): String {
+        val lineEnd = text.indexOf('\n', lineStart).let { if (it < 0) text.length else it }
+        val m = listPrefixRegex.matchEntire(text.substring(lineStart, lineEnd)) ?: return "none"
+        val prefix = m.groupValues[2]
+        return when {
+            prefix.isEmpty() -> "none"
+            prefix == "• " -> "bullet"
+            prefix.startsWith("[") -> "check"
+            prefix[0].isDigit() -> "digit"
+            else -> {
+                val sym = prefix.dropLast(2)
+                val romanChars = "IVXLCDM"
+                if (sym.length > 1) return if (sym.all { it in romanChars }) "roman" else "none"
+                val ch = sym[0]
+                if (ch.uppercaseChar() !in romanChars) return "letter"
+                if (ch.isLowerCase()) return "letter"
+                // ambiguous capital: look at the previous line
+                if (lineStart == 0 || depth > 60) return if (ch == 'I') "roman" else "letter"
+                val prevStart = text.lastIndexOf('\n', lineStart - 2) + 1
+                val prevEnd = lineStart - 1
+                val pm = listPrefixRegex.matchEntire(text.substring(prevStart, prevEnd))
+                val pp = pm?.groupValues?.get(2).orEmpty()
+                if (pp.isEmpty() || pp.first().isDigit() || pp.startsWith("[") || pp == "• ") {
+                    return if (ch == 'I') "roman" else "letter"
+                }
+                val prevKind = resolveListKind(text, prevStart, depth + 1)
+                val psym = pp.dropLast(2)
+                if (prevKind == "roman") {
+                    if (toRoman(romanToInt(psym) + 1) == sym) "roman" else "letter"
+                } else {
+                    if (psym.length == 1 && psym[0].uppercaseChar() + 1 == ch) "letter" else if (ch == 'I') "roman" else "letter"
+                }
+            }
+        }
+    }
+
     /** Enter on a list line continues the list; Enter on an empty list item ends it. */
     fun continueListOnEnter(old: TextFieldValue, new: TextFieldValue): TextFieldValue {
         val oldText = old.text
@@ -630,12 +717,14 @@ fun NoteEditorScreen(
             val cleared = newText.substring(0, lineStart) + newText.substring(cursor)
             return TextFieldValue(cleared, selection = TextRange(lineStart))
         }
-        val nextPrefix = when {
-            prefix == "• " -> "• "
-            prefix.startsWith("[") -> "[ ] "
-            prefix.matches(Regex("[IVXLCDM]+\\. ")) -> "${toRoman(romanToInt(prefix.dropLast(2)) + 1)}. "
-            prefix.length >= 3 && prefix[0].isLetter() && prefix[1] == '.' -> {
-                val next = (prefix[0].lowercaseChar().code + 1).coerceAtMost('z'.code).toChar()
+        val kind = resolveListKind(newText, lineStart)
+        val nextPrefix = when (kind) {
+            "bullet" -> "• "
+            "check" -> "[ ] "
+            "roman" -> "${toRoman(romanToInt(prefix.dropLast(2)) + 1)}. "
+            "letter" -> {
+                val c = prefix[0]
+                val next = if (c == 'Z' || c == 'z') c else c + 1
                 "$next. "
             }
             else -> "${(prefix.dropLast(2).toIntOrNull() ?: 0) + 1}. "
@@ -652,10 +741,30 @@ fun NoteEditorScreen(
     // source of the up/down jump when pressing Enter repeatedly.
     val contentBringIntoViewRequester = remember { BringIntoViewRequester() }
 
-    LaunchedEffect(contentValue.selection, contentValue.text.length) {
+    // Caret-aware scrolling: ask the scroll parent to reveal ONLY the caret rectangle (plus a
+    // little breathing room). If the caret is already visible nothing moves, so Enter never
+    // makes the screen jump. One effect, restarted (not stacked) when the caret moves.
+    val caretMarginPx = with(density) { 56.dp.toPx() }
+    LaunchedEffect(contentValue.selection.start, contentValue.text.length) {
         if (!contentValue.selection.collapsed) return@LaunchedEffect
-        kotlinx.coroutines.delay(90)
-        contentBringIntoViewRequester.bringIntoView()
+        kotlinx.coroutines.delay(32) // let the new text layout arrive
+        val layout = textLayout ?: return@LaunchedEffect
+        val offset = contentValue.selection.start.coerceIn(0, layout.layoutInput.text.length)
+        val caret = layout.getCursorRect(offset)
+        contentBringIntoViewRequester.bringIntoView(
+            Rect(caret.left, caret.top - caretMarginPx / 2f, caret.right + 1f, caret.bottom + caretMarginPx)
+        )
+    }
+
+    // Keep the "current paragraph style" in sync with the line the caret is on, so deleting a
+    // marker from the keyboard (or moving the caret) never leaves a stale list mode behind.
+    val currentListKind = run {
+        val t = contentValue.text
+        val pos = contentValue.selection.min.coerceIn(0, t.length)
+        resolveListKind(t, t.lastIndexOf('\n', pos - 1) + 1)
+    }
+    LaunchedEffect(currentListKind) {
+        listType = if (currentListKind == "check") "none" else currentListKind
     }
 
     // DAY MODE CONTRAST FIX: Default text color in Day mode is dark (Color(0xFF111111))
@@ -766,7 +875,16 @@ fun NoteEditorScreen(
                     }
                 }
 
-                // Pinned title bar — intentionally outside the scrolling note body.
+                // Pinned title bar — its own rectangle, outside the scrolling note body.
+                val wordCount = remember(contentValue.text) {
+                    contentValue.text.split(Regex("\\s+")).count { it.isNotBlank() }
+                }
+                val lineCount = remember(contentValue.text) {
+                    if (contentValue.text.isEmpty()) 0 else contentValue.text.split("\n").size
+                }
+                val systemSaveInFolders = listOf("All Notes", "APIs Keys", "Code", "Media", "Personal")
+                val saveInOptions = systemSaveInFolders + customFoldersList.filter { it !in systemSaveInFolders && it !in hiddenFoldersSet }
+                val saveInLabel = saveInChoice ?: (initialNote?.folder?.takeIf { it != "Hidden" } ?: "All Notes")
                 GlassCard(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
                     shape = RoundedCornerShape(16.dp),
@@ -786,7 +904,45 @@ fun NoteEditorScreen(
                             modifier = Modifier.fillMaxWidth()
                         )
                         Spacer(Modifier.height(3.dp))
-                        Text(SimpleDateFormat("EEEE, MMMM dd | HH:mm", Locale.getDefault()).format(Date()), fontSize = 11.sp, color = if (isDarkMode) Color.White.copy(.5f) else Color.Gray)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                "$wordCount ${if (wordCount == 1) "word" else "words"} • $lineCount ${if (lineCount == 1) "line" else "lines"}",
+                                fontSize = 11.sp,
+                                color = if (isDarkMode) Color.White.copy(.6f) else Color(0xFF666666)
+                            )
+                            Box {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(CrimsonPrimary.copy(alpha = 0.14f))
+                                        .clickable { showSaveInMenu = true }
+                                        .padding(horizontal = 10.dp, vertical = 5.dp)
+                                ) {
+                                    Text("Save in: ", fontSize = 11.sp, color = if (isDarkMode) Color.White.copy(.7f) else Color(0xFF555555))
+                                    Text(saveInLabel, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = CrimsonPrimary, maxLines = 1)
+                                    Icon(Icons.Default.ExpandMore, null, tint = CrimsonPrimary, modifier = Modifier.size(16.dp))
+                                }
+                                DropdownMenu(expanded = showSaveInMenu, onDismissRequest = { showSaveInMenu = false }) {
+                                    saveInOptions.forEach { folderName ->
+                                        DropdownMenuItem(
+                                            text = {
+                                                Text(
+                                                    folderName,
+                                                    fontWeight = if (folderName == saveInLabel) FontWeight.Bold else FontWeight.Normal,
+                                                    color = if (folderName == saveInLabel) CrimsonPrimary else Color.Unspecified
+                                                )
+                                            },
+                                            onClick = { saveInChoice = folderName; showSaveInMenu = false }
+                                        )
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -800,9 +956,10 @@ fun NoteEditorScreen(
                 ) {
 
                     // Inline Attached Images (with Move, Resize, Crop, Rename support - PART F Item 5)
-                    if (attachments.isNotEmpty()) {
+                    val legacyAttachments = attachments.filter { it.id.isBlank() }
+                    if (legacyAttachments.isNotEmpty()) {
                         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            attachments.forEachIndexed { index, att ->
+                            legacyAttachments.forEachIndexed { index, att ->
                                 val isImage = att.mimeType.startsWith("image")
                                 GlassCard(
                                     modifier = Modifier.fillMaxWidth(),
@@ -812,14 +969,10 @@ fun NoteEditorScreen(
                                 ) {
                                     Column(modifier = Modifier.padding(10.dp)) {
                                         if (isImage) {
-                                            AsyncImage(
-                                                model = File(att.uri),
-                                                contentDescription = att.fileName,
-                                                contentScale = ContentScale.Crop,
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .heightIn(max = 240.dp)
-                                                    .clip(RoundedCornerShape(10.dp))
+                                            AttachmentFrame(
+                                                att = att,
+                                                modifier = Modifier.fillMaxWidth(att.widthFraction),
+                                                cornerRadius = 10
                                             )
                                         }
 
@@ -848,7 +1001,8 @@ fun NoteEditorScreen(
 
                                                 IconButton(
                                                     onClick = {
-                                                        attachments = attachments.toMutableList().apply { removeAt(index) }
+                                                        if (!att.locked) attachments = attachments.filter { it != att }
+                                                        else Toast.makeText(context, "Image is locked", Toast.LENGTH_SHORT).show()
                                                     },
                                                     modifier = Modifier.size(28.dp)
                                                 ) {
@@ -873,18 +1027,12 @@ fun NoteEditorScreen(
                         Spacer(modifier = Modifier.height(14.dp))
                     }
 
-                    fun syncListTypeFromEditor() {
-                        val prefix = linePrefixOf(firstSelectedLine())
-                        listType = when {
-                            prefix == "• " -> "bullet"
-                            prefix?.matches(Regex("\\d+\\. ")) == true -> "digit"
-                            prefix?.matches(Regex("[A-Za-z]\\. ")) == true -> "letter"
-                            prefix?.matches(Regex("[IVXLCDM]+\\. ")) == true -> "roman"
-                            else -> "none"
-                        }
-                    }
-
                     // Main Content Input (Day Mode text contrast fix & Auto-Scroll buffer)
+                    Box(modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 260.dp)
+                        .onSizeChanged { fieldWidthPx = it.width.toFloat() }
+                    ) {
                     BasicTextField(
                         value = contentValue,
                         onValueChange = { rawVal ->
@@ -919,7 +1067,6 @@ fun NoteEditorScreen(
                                 }
                             }
                             contentValue = newVal
-                            syncListTypeFromEditor()
                             // Auto-scroll is coordinated by the debounced LaunchedEffect above.
                             // Do not launch a second scroll request for every keystroke.
                         },
@@ -934,7 +1081,14 @@ fun NoteEditorScreen(
                                             spans = spans,
                                             defaultColor = effectiveTextColor,
                                             fontSize = fontSize.toFloat()
-                                        )
+                                        ),
+                                        imageLineHeight = { id ->
+                                            val att = attachments.firstOrNull { it.id == id }
+                                            if (att == null || fieldWidthPx <= 0f) null
+                                            else with(density) {
+                                                (AttachmentRenderer.frameHeightPx(att, fieldWidthPx * att.widthFraction) + 10.dp.toPx()).toSp()
+                                            }
+                                        }
                                     )
                                 },
                                 OffsetMapping.Identity
@@ -962,15 +1116,79 @@ fun NoteEditorScreen(
                             }
                             innerTextField()
                         },
+                        onTextLayout = { textLayout = it },
                         modifier = Modifier
                             .fillMaxWidth()
                             .heightIn(min = 260.dp)
                             .bringIntoViewRequester(contentBringIntoViewRequester)
-                            .onFocusEvent {
-                                // Initial focus is handled by the same debounced selection effect;
-                                // avoid competing scroll animations here.
-                            }
                     )
+
+                    // Inline images: drawn over their "[img:id]" lines (those lines reserve the height).
+                    textLayout?.let { layout ->
+                        val full = contentValue.text
+                        if (layout.layoutInput.text.length == full.length && fieldWidthPx > 0f) {
+                            Regex("(?m)^\\[img:([A-Za-z0-9]{4,32})]$").findAll(full).forEach { m ->
+                                val att = attachments.firstOrNull { it.id == m.groupValues[1] } ?: return@forEach
+                                val line = layout.getLineForOffset(m.range.first)
+                                val top = layout.getLineTop(line)
+                                AttachmentFrame(
+                                    att = att,
+                                    modifier = Modifier
+                                        .offset { IntOffset(0, top.roundToInt()) }
+                                        .width(with(density) { (fieldWidthPx * att.widthFraction).toDp() })
+                                        .clickable { showImageEditModal = att }
+                                )
+                                if (att.locked) {
+                                    Icon(
+                                        Icons.Default.Lock, "Locked",
+                                        tint = Color.White,
+                                        modifier = Modifier
+                                            .offset { IntOffset(6, top.roundToInt() + 6) }
+                                            .size(18.dp)
+                                            .background(Color(0x99000000), CircleShape)
+                                            .padding(3.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // Real, clickable checkbox rectangles drawn over the (invisible) "[ ]" markers.
+                    textLayout?.let { layout ->
+                        val full = contentValue.text
+                        if (layout.layoutInput.text.length == full.length) {
+                            val markerRegex = Regex("(?m)^([ \\t]*)(\\[ \\]|\\[x\\]|\\[!\\]) ")
+                            markerRegex.findAll(full).forEach { m ->
+                                val markerStart = m.groups[2]!!.range.first
+                                val line = layout.getLineForOffset(markerStart)
+                                val x = layout.getHorizontalPosition(markerStart, true)
+                                val top = layout.getLineTop(line)
+                                val bottom = layout.getLineBottom(line)
+                                val boxPx = with(density) { 18.dp.toPx() }
+                                val state = m.groups[2]!!.value
+                                val green = Color(0xFF35B65B)
+                                val red = Color(0xFFE05252)
+                                val tint = when (state) { "[x]" -> green; "[!]" -> red; else -> if (isDarkMode) Color.White.copy(.75f) else Color(0xFF555555) }
+                                Box(
+                                    modifier = Modifier
+                                        .offset { IntOffset(x.roundToInt(), (top + (bottom - top - boxPx) / 2f).roundToInt()) }
+                                        .size(18.dp)
+                                        .clip(RoundedCornerShape(4.dp))
+                                        .background(if (state == "[ ]") Color.Transparent else tint.copy(alpha = .18f))
+                                        .border(1.6.dp, tint, RoundedCornerShape(4.dp))
+                                        .clickable { cycleCheckboxAt(markerStart) },
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    when (state) {
+                                        "[x]" -> Icon(Icons.Default.Check, "Checked", tint = green, modifier = Modifier.size(14.dp))
+                                        "[!]" -> Icon(Icons.Default.Close, "Crossed", tint = red, modifier = Modifier.size(14.dp))
+                                        else -> Unit
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    }
 
                     // Safe Bottom Space so typing near the bottom never slips behind the toolbar
                     Spacer(modifier = Modifier.height(160.dp))
@@ -1007,7 +1225,7 @@ fun NoteEditorScreen(
                         ToolDivider(isDarkMode)
 
                         EditorTool(icon = Icons.Default.FormatListNumbered, label = "Paragraph style",
-                            active = listType != "none" || alignment != "left", idleTint = idleTint) { showParagraphStyleSheet = true }
+                            active = currentListKind != "none" && currentListKind != "check" || alignment != "left", idleTint = idleTint) { showParagraphStyleSheet = true }
 
                         ToolDivider(isDarkMode)
 
@@ -1017,27 +1235,9 @@ fun NoteEditorScreen(
 
                         ToolDivider(isDarkMode)
 
-                        // Three-state checkbox tool: empty → checked → crossed → empty.
-                        val checkboxPrefix = linePrefixOf(firstSelectedLine())
-                        val checkboxState = when (checkboxPrefix) {
-                            "[x] " -> 1
-                            "[!] " -> 2
-                            else -> 0
-                        }
-                        Box(
-                            modifier = Modifier
-                                .size(42.dp)
-                                .clip(RoundedCornerShape(9.dp))
-                                .border(1.5.dp, if (checkboxState == 1) Color(0xFF35B65B) else if (checkboxState == 2) Color(0xFFE05252) else idleTint.copy(alpha = .55f), RoundedCornerShape(9.dp))
-                                .background(if (checkboxState == 1) Color(0xFF35B65B).copy(.16f) else if (checkboxState == 2) Color(0xFFE05252).copy(.16f) else Color.Transparent)
-                                .clickable { toggleCheckbox() },
-                            contentAlignment = Alignment.Center
-                        ) {
-                            when (checkboxState) {
-                                1 -> Icon(Icons.Default.Check, "Checked", tint = Color(0xFF35B65B), modifier = Modifier.size(20.dp))
-                                2 -> Icon(Icons.Default.Close, "Crossed", tint = Color(0xFFE05252), modifier = Modifier.size(20.dp))
-                                else -> Unit
-                            }
+                        // Checkbox tool: each tap inserts ONE checkbox line. The icon never changes state.
+                        EditorTool(icon = Icons.Default.CheckBoxOutlineBlank, label = "Insert checkbox", active = false, idleTint = idleTint) {
+                            insertCheckbox()
                         }
 
                         ToolDivider(isDarkMode)
@@ -1124,8 +1324,8 @@ fun NoteEditorScreen(
                             "roman" to ("IV." to "Roman")
                         )
                         styles.forEach { (value, item) ->
-                            val active = listType == value
-                            Box(Modifier.weight(1f).height(82.dp).clip(RoundedCornerShape(10.dp)).background(if (active) CrimsonPrimary.copy(.18f) else Color.Transparent).clickable { toggleParagraphList(value) }, contentAlignment = Alignment.Center) {
+                            val active = currentListKind == value
+                            Box(Modifier.weight(1f).height(82.dp).clip(RoundedCornerShape(10.dp)).background(if (active) CrimsonPrimary.copy(.18f) else Color.Transparent).clickable { toggleParagraphList(value, currentListKind) }, contentAlignment = Alignment.Center) {
                                 Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
                                     Text(item.first, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = if (active) CrimsonPrimary else iconColor)
                                     Spacer(Modifier.height(4.dp))
@@ -1332,7 +1532,7 @@ fun NoteEditorScreen(
         isDarkMode = isDarkMode,
         preferences = preferences,
         repository = repository,
-        currentNoteContent = "Title: $title\n\n${contentValue.text}",
+        currentNoteContent = "Title: $title\n\n${ImageMarkers.strip(contentValue.text)}",
         onClose = { showAiChatbotModal = false },
         onCreateNoteFromAi = { _, _, _ -> },
         onModifyCurrentNote = { newContent ->
@@ -1343,38 +1543,29 @@ fun NoteEditorScreen(
 
     // Image Edit Modal (Move, Crop, Resize, Rename - PART F Item 5)
     showImageEditModal?.let { imgAtt ->
-        var editedName by remember { mutableStateOf(imgAtt.fileName) }
-        AlertDialog(
-            onDismissRequest = { showImageEditModal = null },
-            title = { Text("Edit Image in Note", fontWeight = FontWeight.Bold) },
-            text = {
-                Column {
-                    OutlinedTextField(
-                        value = editedName,
-                        onValueChange = { editedName = it },
-                        label = { Text("Rename File") },
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Text("Actions available: Crop, Resize, Reorder in note.", fontSize = 12.sp, color = Color.Gray)
-                }
+        ImageEditorDialog(
+            initial = imgAtt,
+            isDarkMode = isDarkMode,
+            onDismiss = { showImageEditModal = null },
+            onApply = { edited ->
+                attachments = attachments.map { if (it.uri == imgAtt.uri && it.id == imgAtt.id) edited else it }
+                showImageEditModal = null
             },
-            confirmButton = {
-                Button(
-                    colors = ButtonDefaults.buttonColors(containerColor = CrimsonPrimary),
-                    onClick = {
-                        attachments = attachments.map {
-                            if (it.uri == imgAtt.uri) it.copy(fileName = editedName) else it
-                        }
-                        showImageEditModal = null
-                        Toast.makeText(context, "Image updated!", Toast.LENGTH_SHORT).show()
+            onDelete = {
+                attachments = attachments.filter { !(it.uri == imgAtt.uri && it.id == imgAtt.id) }
+                if (imgAtt.id.isNotBlank()) {
+                    // also remove its "[img:id]" line from the text
+                    val marker = ImageMarkers.marker(imgAtt.id)
+                    val old = contentValue.text
+                    val idx = old.indexOf(marker)
+                    if (idx >= 0) {
+                        val endIdx = (idx + marker.length + if (old.getOrNull(idx + marker.length) == '\n') 1 else 0).coerceAtMost(old.length)
+                        val newText = old.removeRange(idx, endIdx)
+                        spans = RichTextFormatter.adjustSpansForEdit(spans, old, newText)
+                        contentValue = TextFieldValue(newText, selection = TextRange(idx.coerceAtMost(newText.length)))
                     }
-                ) {
-                    Text("Apply")
                 }
-            },
-            dismissButton = {
-                TextButton(onClick = { showImageEditModal = null }) { Text("Cancel") }
+                showImageEditModal = null
             }
         )
     }
@@ -1382,22 +1573,36 @@ fun NoteEditorScreen(
 
 
 /** Adds a coloured marker + strike-through for checked items, without changing text length. */
-private fun decorateListMarkers(base: AnnotatedString): AnnotatedString {
+private fun decorateListMarkers(base: AnnotatedString, imageLineHeight: (String) -> TextUnit? = { null }): AnnotatedString {
     val text = base.text
     if (text.isEmpty()) return base
-    val markerRegex = Regex("(?m)^([ \\t]*)(\\[ \\]|\\[x\\]|•|\\d+\\.|[A-Za-z]\\.) ")
-    val lineRegex = Regex("(?m)^[ \\t]*\\[x\\] .*$")
+    val markerRegex = Regex("(?m)^([ \\t]*)(\\[ \\]|\\[x\\]|\\[!\\]|•|\\d+\\.|[A-Za-z]\\.|[IVXLCDM]{2,}\\.) ")
+    val imageRegex = Regex("(?m)^\\[img:([A-Za-z0-9]{4,32})]$")
     return androidx.compose.ui.text.buildAnnotatedString {
         append(base)
+        for (m in imageRegex.findAll(text)) {
+            val h = imageLineHeight(m.groupValues[1]) ?: continue
+            val start = m.range.first
+            val endExclusive = m.range.last + 1
+            addStyle(SpanStyle(color = Color.Transparent), start, endExclusive)
+            // whole line incl. its newline becomes one tall paragraph that reserves room for the picture
+            addStyle(ParagraphStyle(lineHeight = h), start, (endExclusive + 1).coerceAtMost(text.length))
+        }
         for (m in markerRegex.findAll(text)) {
             val g = m.groups[2] ?: continue
-            addStyle(SpanStyle(color = CrimsonPrimary, fontWeight = FontWeight.Bold), g.range.first, g.range.last + 1)
-        }
-        for (m in lineRegex.findAll(text)) {
-            val bodyStart = m.value.indexOf("] ") + 2
-            val from = m.range.first + bodyStart
-            if (from < m.range.last + 1) {
-                addStyle(SpanStyle(textDecoration = TextDecoration.LineThrough, color = Color.Gray), from, m.range.last + 1)
+            val marker = g.value
+            val from = g.range.first
+            val to = g.range.last + 1
+            if (marker.startsWith("[")) {
+                // The actual checkbox is a Compose element over this space; hide the characters
+                addStyle(SpanStyle(color = Color.Transparent), from, to)
+                val lineEnd = text.indexOf('\n', to).let { if (it < 0) text.length else it }
+                val bodyStart = to + 1
+                if (marker == "[x]" && bodyStart < lineEnd) {
+                    addStyle(SpanStyle(textDecoration = TextDecoration.LineThrough, color = Color.Gray), bodyStart, lineEnd)
+                }
+            } else {
+                addStyle(SpanStyle(color = CrimsonPrimary, fontWeight = FontWeight.Bold), from, to)
             }
         }
     }

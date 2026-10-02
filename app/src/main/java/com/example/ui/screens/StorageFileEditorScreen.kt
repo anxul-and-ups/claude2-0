@@ -47,6 +47,18 @@ import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material.icons.filled.DriveFileMove
+import androidx.compose.material.icons.filled.DriveFileRenameOutline
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.LockOpen
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.OpenInNew
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import com.example.ui.util.FileManagerStore
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilledTonalButton
@@ -117,6 +129,18 @@ fun StorageFileEditorScreen(
 
     var fileList by remember { mutableStateOf<List<RealStorageItem>>(emptyList()) }
     var showDetailsDialog by remember { mutableStateOf<RealStorageItem?>(null) }
+
+    // ---- file management: folders, move, rename, lock (persisted by FileManagerStore) ----
+    val store = remember { FileManagerStore(context) }
+    var storeVersion by remember { mutableStateOf(0) } // bump to re-read store-backed state
+    var activeFolder by remember { mutableStateOf("All") }
+    var menuItemPath by remember { mutableStateOf<String?>(null) }
+    var moveTarget by remember { mutableStateOf<RealStorageItem?>(null) }
+    var renameTarget by remember { mutableStateOf<RealStorageItem?>(null) }
+    var renameInput by remember { mutableStateOf("") }
+    var showNewFolderDialog by remember { mutableStateOf(false) }
+    var newFolderInput by remember { mutableStateOf("") }
+    var deleteTarget by remember { mutableStateOf<RealStorageItem?>(null) }
 
     fun refreshFiles() {
         val list = mutableListOf<RealStorageItem>()
@@ -197,7 +221,18 @@ fun StorageFileEditorScreen(
 
                 val isPdf = displayName.endsWith(".pdf", ignoreCase = true)
                 if (isPdf) {
-                    onOpenPdf(uri)
+                    // Safe import: a byte-for-byte copy lives in app storage, so it can be moved,
+                    // locked and re-opened later even after the picker permission is gone.
+                    val target = if (activeFolder != "All" && activeFolder != "Unfiled") activeFolder else null
+                    val copy = store.importIntoAppStorage(uri, target)
+                    if (copy != null) {
+                        refreshFiles()
+                        storeVersion++
+                        Toast.makeText(context, "Imported ${copy.name}", Toast.LENGTH_SHORT).show()
+                        onOpenPdf(Uri.fromFile(copy))
+                    } else {
+                        Toast.makeText(context, "Could not import this PDF", Toast.LENGTH_SHORT).show()
+                    }
                 } else {
                     val content = context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() } ?: ""
                     val item = RealStorageItem(
@@ -218,8 +253,16 @@ fun StorageFileEditorScreen(
         }
     }
 
-    val filteredList = fileList.filter {
-        it.name.contains(searchQuery, ignoreCase = true) || it.path.contains(searchQuery, ignoreCase = true)
+    val storeFolders = remember(storeVersion) { store.folders() }
+    val filteredList = remember(fileList, searchQuery, activeFolder, storeVersion) {
+        fileList.filter {
+            (it.name.contains(searchQuery, ignoreCase = true) || it.path.contains(searchQuery, ignoreCase = true)) &&
+                when (activeFolder) {
+                    "All" -> true
+                    "Unfiled" -> store.folderOf(it.path) == null
+                    else -> store.folderOf(it.path) == activeFolder
+                }
+        }
     }
 
     GlassBackground(isDarkMode = isDarkMode) {
@@ -386,6 +429,10 @@ fun StorageFileEditorScreen(
                                     IconButton(onClick = {
                                         // Save back to file
                                         try {
+                                            if (store.isLocked(item.path)) {
+                                                Toast.makeText(context, "File is locked — unlock to save changes", Toast.LENGTH_SHORT).show()
+                                                return@IconButton
+                                            }
                                             if (item.file != null) {
                                                 item.file.writeText(fileContentEdit)
                                                 Toast.makeText(context, "File Saved!", Toast.LENGTH_SHORT).show()
@@ -422,7 +469,8 @@ fun StorageFileEditorScreen(
 
                             OutlinedTextField(
                                 value = fileContentEdit,
-                                onValueChange = { fileContentEdit = it },
+                                onValueChange = { if (!store.isLocked(item.path)) fileContentEdit = it },
+                                readOnly = store.isLocked(item.path),
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .weight(1f),
@@ -459,7 +507,39 @@ fun StorageFileEditorScreen(
                         modifier = Modifier.fillMaxWidth()
                     )
 
-                    Spacer(modifier = Modifier.height(14.dp))
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // File folders (app-managed). "All" shows everything, "Unfiled" what has no folder.
+                    Row(
+                        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        (listOf("All", "Unfiled") + storeFolders).forEach { name ->
+                            val selected = activeFolder == name
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(if (selected) CrimsonPrimary else (if (isDarkMode) Color(0x1AFFFFFF) else Color(0x0F000000)))
+                                    .clickable { activeFolder = name }
+                                    .padding(horizontal = 12.dp, vertical = 7.dp)
+                            ) {
+                                Text(
+                                    name, fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+                                    color = if (selected) Color.White else (if (isDarkMode) Color.White else Color(0xFF222222))
+                                )
+                            }
+                        }
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(CrimsonPrimary.copy(alpha = 0.15f))
+                                .clickable { showNewFolderDialog = true }
+                                .padding(horizontal = 12.dp, vertical = 7.dp)
+                        ) { Text("+ Folder", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = CrimsonPrimary) }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
 
                     // File List
                     if (filteredList.isEmpty()) {
@@ -501,6 +581,8 @@ fun StorageFileEditorScreen(
                                             } else if (item.uri != null) {
                                                 onOpenPdf(item.uri)
                                             }
+                                        } else if (item.isDirectory) {
+                                            Toast.makeText(context, "Folders can't be opened here", Toast.LENGTH_SHORT).show()
                                         } else {
                                             try {
                                                 val text = if (item.file != null) {
@@ -551,24 +633,97 @@ fun StorageFileEditorScreen(
                                             }
                                         }
 
-                                        Row {
-                                            IconButton(
-                                                onClick = { showDetailsDialog = item },
-                                                modifier = Modifier.size(32.dp)
-                                            ) {
-                                                Icon(Icons.Default.Info, contentDescription = "Details", tint = Color.Gray, modifier = Modifier.size(18.dp))
+                                        val locked = remember(storeVersion, item.path) { store.isLocked(item.path) }
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            if (locked) {
+                                                Icon(Icons.Default.Lock, contentDescription = "Locked", tint = CrimsonPrimary, modifier = Modifier.size(16.dp))
                                             }
-
-                                            if (item.file != null) {
-                                                IconButton(
-                                                    onClick = {
-                                                        item.file.delete()
-                                                        refreshFiles()
-                                                        Toast.makeText(context, "Deleted ${item.name}", Toast.LENGTH_SHORT).show()
-                                                    },
-                                                    modifier = Modifier.size(32.dp)
-                                                ) {
-                                                    Icon(Icons.Default.Delete, contentDescription = "Delete", tint = Color.Red.copy(0.7f), modifier = Modifier.size(18.dp))
+                                            Box {
+                                                IconButton(onClick = { menuItemPath = item.path }, modifier = Modifier.size(32.dp)) {
+                                                    Icon(Icons.Default.MoreVert, contentDescription = "Actions", tint = Color.Gray, modifier = Modifier.size(20.dp))
+                                                }
+                                                DropdownMenu(expanded = menuItemPath == item.path, onDismissRequest = { menuItemPath = null }) {
+                                                    // Open — every file type
+                                                    DropdownMenuItem(
+                                                        text = { Text("Open") },
+                                                        leadingIcon = { Icon(Icons.Default.OpenInNew, null) },
+                                                        onClick = {
+                                                            menuItemPath = null
+                                                            if (item.isPdf) {
+                                                                if (item.file != null) onOpenPdf(Uri.fromFile(item.file)) else item.uri?.let(onOpenPdf)
+                                                            } else if (!item.isDirectory) {
+                                                                try {
+                                                                    val text = item.file?.readText()
+                                                                        ?: item.uri?.let { u -> context.contentResolver.openInputStream(u)?.bufferedReader()?.use { it.readText() } }
+                                                                        ?: ""
+                                                                    selectedFileItem = item
+                                                                    fileContentEdit = text
+                                                                    isEditingInPlace = true
+                                                                } catch (e: Exception) {
+                                                                    Toast.makeText(context, "Cannot read file: ${e.message}", Toast.LENGTH_SHORT).show()
+                                                                }
+                                                            }
+                                                        }
+                                                    )
+                                                    // Edit — only text-like files that are not locked
+                                                    if (!item.isPdf && !item.isDirectory && !locked) {
+                                                        DropdownMenuItem(
+                                                            text = { Text("Edit") },
+                                                            leadingIcon = { Icon(Icons.Default.Edit, null) },
+                                                            onClick = {
+                                                                menuItemPath = null
+                                                                try {
+                                                                    val text = item.file?.readText() ?: ""
+                                                                    selectedFileItem = item
+                                                                    fileContentEdit = text
+                                                                    isEditingInPlace = true
+                                                                } catch (e: Exception) {
+                                                                    Toast.makeText(context, "Cannot read file: ${e.message}", Toast.LENGTH_SHORT).show()
+                                                                }
+                                                            }
+                                                        )
+                                                    }
+                                                    if (!item.isDirectory) {
+                                                        // Move — blocked while locked
+                                                        DropdownMenuItem(
+                                                            text = { Text(if (locked) "Move (locked)" else "Move to folder") },
+                                                            leadingIcon = { Icon(Icons.Default.DriveFileMove, null) },
+                                                            enabled = !locked,
+                                                            onClick = { menuItemPath = null; moveTarget = item }
+                                                        )
+                                                        // Rename — only files inside app storage
+                                                        if (item.file != null && store.isAppManaged(item.file)) {
+                                                            DropdownMenuItem(
+                                                                text = { Text(if (locked) "Rename (locked)" else "Rename") },
+                                                                leadingIcon = { Icon(Icons.Default.DriveFileRenameOutline, null) },
+                                                                enabled = !locked,
+                                                                onClick = { menuItemPath = null; renameInput = item.name; renameTarget = item }
+                                                            )
+                                                        }
+                                                        DropdownMenuItem(
+                                                            text = { Text(if (locked) "Unlock" else "Lock") },
+                                                            leadingIcon = { Icon(if (locked) Icons.Default.LockOpen else Icons.Default.Lock, null) },
+                                                            onClick = {
+                                                                menuItemPath = null
+                                                                store.setLocked(item.path, !locked)
+                                                                storeVersion++
+                                                                Toast.makeText(context, if (!locked) "Locked ${item.name}" else "Unlocked ${item.name}", Toast.LENGTH_SHORT).show()
+                                                            }
+                                                        )
+                                                    }
+                                                    DropdownMenuItem(
+                                                        text = { Text("Details") },
+                                                        leadingIcon = { Icon(Icons.Default.Info, null) },
+                                                        onClick = { menuItemPath = null; showDetailsDialog = item }
+                                                    )
+                                                    if (item.file != null && !item.isDirectory) {
+                                                        DropdownMenuItem(
+                                                            text = { Text(if (locked) "Delete (locked)" else "Delete", color = if (locked) Color.Gray else Color.Red) },
+                                                            leadingIcon = { Icon(Icons.Default.Delete, null, tint = if (locked) Color.Gray else Color.Red) },
+                                                            enabled = !locked,
+                                                            onClick = { menuItemPath = null; deleteTarget = item }
+                                                        )
+                                                    }
                                                 }
                                             }
                                         }
@@ -580,6 +735,169 @@ fun StorageFileEditorScreen(
                 }
             }
         }
+    }
+
+    // ---- Move dialog: destination list of available folders ----
+    moveTarget?.let { item ->
+        val outside = item.file != null && !store.isAppManaged(item.file)
+        AlertDialog(
+            onDismissRequest = { moveTarget = null },
+            title = { Text("Move \"${item.name}\"", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                    if (outside || item.file == null) {
+                        Text(
+                            "This file belongs to other storage, so Android doesn't allow moving it. " +
+                                "A copy will be placed in the chosen folder inside AU Notes; the original stays where it is.",
+                            fontSize = 12.sp, color = Color.Gray
+                        )
+                        Spacer(Modifier.height(10.dp))
+                    }
+                    val options = listOf<Pair<String, String?>>("Unfiled (no folder)" to null) + storeFolders.map { it to it }
+                    options.forEach { (label, target) ->
+                        val current = store.folderOf(item.path)
+                        TextButton(
+                            onClick = {
+                                var path = item.path
+                                if (outside) {
+                                    val copy = item.file?.let { store.importFile(it, target) }
+                                    if (copy == null) {
+                                        Toast.makeText(context, "Could not copy file", Toast.LENGTH_SHORT).show()
+                                        moveTarget = null
+                                        return@TextButton
+                                    }
+                                    path = copy.absolutePath
+                                } else if (item.uri != null) {
+                                    val copy = store.importIntoAppStorage(item.uri, target)
+                                    if (copy == null) {
+                                        Toast.makeText(context, "Could not copy file", Toast.LENGTH_SHORT).show()
+                                        moveTarget = null
+                                        return@TextButton
+                                    }
+                                    path = copy.absolutePath
+                                } else {
+                                    store.assign(path, target)
+                                }
+                                moveTarget = null
+                                refreshFiles()
+                                storeVersion++
+                                Toast.makeText(context, if (target == null) "Moved to Unfiled" else "Moved to $target", Toast.LENGTH_SHORT).show()
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.Folder, null, tint = Color(0xFFFFCA28), modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(10.dp))
+                                Text(
+                                    label,
+                                    fontWeight = if (current == target) FontWeight.Bold else FontWeight.Normal,
+                                    color = if (current == target) CrimsonPrimary else Color.Unspecified
+                                )
+                            }
+                        }
+                    }
+                    if (storeFolders.isEmpty()) {
+                        Text("No folders yet — close this and tap \"+ Folder\" to create one.", fontSize = 12.sp, color = Color.Gray)
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = { TextButton(onClick = { moveTarget = null }) { Text("Cancel") } }
+        )
+    }
+
+    renameTarget?.let { item ->
+        AlertDialog(
+            onDismissRequest = { renameTarget = null },
+            title = { Text("Rename file", fontWeight = FontWeight.Bold) },
+            text = {
+                OutlinedTextField(
+                    value = renameInput,
+                    onValueChange = { renameInput = it },
+                    singleLine = true,
+                    label = { Text("File name") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+            },
+            confirmButton = {
+                Button(
+                    colors = ButtonDefaults.buttonColors(containerColor = CrimsonPrimary),
+                    onClick = {
+                        val clean = renameInput.trim().replace(Regex("[\\\\/:*?\"<>|]"), "_")
+                        val f = item.file
+                        if (f == null || clean.isEmpty() || store.isLocked(item.path)) {
+                            renameTarget = null
+                        } else {
+                            val dest = File(f.parentFile, clean)
+                            if (dest.exists()) {
+                                Toast.makeText(context, "A file with that name already exists", Toast.LENGTH_SHORT).show()
+                            } else if (f.renameTo(dest)) {
+                                store.onRenamed(f.absolutePath, dest.absolutePath)
+                                renameTarget = null
+                                refreshFiles()
+                                storeVersion++
+                            } else {
+                                Toast.makeText(context, "Rename failed", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    }
+                ) { Text("Rename") }
+            },
+            dismissButton = { TextButton(onClick = { renameTarget = null }) { Text("Cancel") } }
+        )
+    }
+
+    if (showNewFolderDialog) {
+        AlertDialog(
+            onDismissRequest = { showNewFolderDialog = false; newFolderInput = "" },
+            title = { Text("New file folder", fontWeight = FontWeight.Bold) },
+            text = {
+                OutlinedTextField(
+                    value = newFolderInput,
+                    onValueChange = { newFolderInput = it },
+                    singleLine = true,
+                    label = { Text("Folder name") },
+                    modifier = Modifier.fillMaxWidth()
+                )
+            },
+            confirmButton = {
+                Button(
+                    colors = ButtonDefaults.buttonColors(containerColor = CrimsonPrimary),
+                    onClick = {
+                        if (store.createFolder(newFolderInput)) {
+                            activeFolder = newFolderInput.trim()
+                            storeVersion++
+                            showNewFolderDialog = false
+                            newFolderInput = ""
+                        } else {
+                            Toast.makeText(context, "Enter a new, unique folder name", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                ) { Text("Create") }
+            },
+            dismissButton = { TextButton(onClick = { showNewFolderDialog = false; newFolderInput = "" }) { Text("Cancel") } }
+        )
+    }
+
+    deleteTarget?.let { item ->
+        AlertDialog(
+            onDismissRequest = { deleteTarget = null },
+            title = { Text("Delete file?") },
+            text = { Text("\"${item.name}\" will be deleted permanently.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    if (!store.isLocked(item.path)) {
+                        item.file?.delete()
+                        store.onDeleted(item.path)
+                        refreshFiles()
+                        storeVersion++
+                        Toast.makeText(context, "Deleted ${item.name}", Toast.LENGTH_SHORT).show()
+                    }
+                    deleteTarget = null
+                }) { Text("Delete", color = Color.Red, fontWeight = FontWeight.Bold) }
+            },
+            dismissButton = { TextButton(onClick = { deleteTarget = null }) { Text("Cancel") } }
+        )
     }
 
     // Create File Dialog
@@ -633,6 +951,9 @@ fun StorageFileEditorScreen(
                     Text("Size: ${item.sizeString}", fontSize = 12.sp)
                     Spacer(modifier = Modifier.height(4.dp))
                     Text("Modified: ${Date(item.lastModified).toLocaleString()}", fontSize = 12.sp)
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text("Folder: ${store.folderOf(item.path) ?: "Unfiled"}", fontSize = 12.sp)
+                    Text("Status: ${if (store.isLocked(item.path)) "Locked" else "Unlocked"}", fontSize = 12.sp)
                 }
             },
             confirmButton = {

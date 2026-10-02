@@ -21,11 +21,37 @@ object RichTextFormatter {
         val value: String? = null
     )
 
+    /**
+     * An attached file. For images the extra fields describe a NON-destructive edit: the original
+     * file is never modified, the edit is re-applied whenever the image is drawn / exported.
+     *
+     *  - id            non-blank => the image sits INLINE in the note text on a "[img:<id>]" line
+     *  - widthFraction share of the note width the image frame takes (0.2..1)
+     *  - zoom, posX, posY  zoom and offset (fraction of frame size) of the picture inside its frame
+     *  - rotation      0/90/180/270, applied before cropping
+     *  - crop*         fraction (0..0.45) trimmed from each side of the (rotated) image
+     *  - locked        locked images cannot be moved / resized / rotated / cropped
+     *  - order         insertion order (informational; inline position comes from the text line)
+     */
     data class AttachmentInfo(
         val uri: String,
         val fileName: String,
         val mimeType: String,
-        val sizeBytes: Long
+        val sizeBytes: Long,
+        val id: String = "",
+        val srcWidth: Int = 0,
+        val srcHeight: Int = 0,
+        val widthFraction: Float = 1f,
+        val zoom: Float = 1f,
+        val posX: Float = 0f,
+        val posY: Float = 0f,
+        val rotation: Int = 0,
+        val cropLeft: Float = 0f,
+        val cropTop: Float = 0f,
+        val cropRight: Float = 0f,
+        val cropBottom: Float = 0f,
+        val locked: Boolean = false,
+        val order: Int = 0
     )
 
     fun serializeSpans(spans: List<TextSpan>): String {
@@ -70,6 +96,20 @@ object RichTextFormatter {
             obj.put("fileName", att.fileName)
             obj.put("mimeType", att.mimeType)
             obj.put("sizeBytes", att.sizeBytes)
+            obj.put("id", att.id)
+            obj.put("srcW", att.srcWidth)
+            obj.put("srcH", att.srcHeight)
+            obj.put("wf", att.widthFraction.toDouble())
+            obj.put("zoom", att.zoom.toDouble())
+            obj.put("px", att.posX.toDouble())
+            obj.put("py", att.posY.toDouble())
+            obj.put("rot", att.rotation)
+            obj.put("cl", att.cropLeft.toDouble())
+            obj.put("ct", att.cropTop.toDouble())
+            obj.put("cr", att.cropRight.toDouble())
+            obj.put("cb", att.cropBottom.toDouble())
+            obj.put("locked", att.locked)
+            obj.put("order", att.order)
             array.put(obj)
         }
         return array.toString()
@@ -87,7 +127,21 @@ object RichTextFormatter {
                         uri = obj.optString("uri", ""),
                         fileName = obj.optString("fileName", "file"),
                         mimeType = obj.optString("mimeType", "*/*"),
-                        sizeBytes = obj.optLong("sizeBytes", 0L)
+                        sizeBytes = obj.optLong("sizeBytes", 0L),
+                        id = obj.optString("id", ""),
+                        srcWidth = obj.optInt("srcW", 0),
+                        srcHeight = obj.optInt("srcH", 0),
+                        widthFraction = obj.optDouble("wf", 1.0).toFloat().coerceIn(0.2f, 1f),
+                        zoom = obj.optDouble("zoom", 1.0).toFloat().coerceIn(0.3f, 5f),
+                        posX = obj.optDouble("px", 0.0).toFloat(),
+                        posY = obj.optDouble("py", 0.0).toFloat(),
+                        rotation = ((obj.optInt("rot", 0) % 360) + 360) % 360,
+                        cropLeft = obj.optDouble("cl", 0.0).toFloat().coerceIn(0f, 0.45f),
+                        cropTop = obj.optDouble("ct", 0.0).toFloat().coerceIn(0f, 0.45f),
+                        cropRight = obj.optDouble("cr", 0.0).toFloat().coerceIn(0f, 0.45f),
+                        cropBottom = obj.optDouble("cb", 0.0).toFloat().coerceIn(0f, 0.45f),
+                        locked = obj.optBoolean("locked", false),
+                        order = obj.optInt("order", 0)
                     )
                 )
             }

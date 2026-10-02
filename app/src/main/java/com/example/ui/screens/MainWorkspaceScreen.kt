@@ -41,6 +41,11 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.ui.zIndex
+import androidx.compose.ui.input.pointer.pointerInput
+import com.example.ui.components.LiquidWaveOverlay
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
@@ -79,6 +84,7 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -95,7 +101,6 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -277,6 +282,23 @@ fun MainWorkspaceScreen(
         all.distinct().filter { it !in hiddenFolders }
     }
 
+    // Live note count per folder (All Notes is global, so it counts every visible note)
+    val folderCounts = remember(allNotes, lockedFolders) {
+        fun count(folder: String) = allNotes.count {
+            when (folder) {
+                "All Notes" -> true
+                "Favorites" -> it.isFavorite
+                "APIs Keys" -> it.category == "API"
+                "Code" -> it.category == "Code"
+                "Media" -> it.category == "Media"
+                "Personal" -> it.category == "Personal"
+                else -> it.folder == folder
+            }
+        }
+        (listOf("All Notes", "Favorites", "APIs Keys", "Code", "Media", "Personal") + customFolders)
+            .distinct().associateWith { count(it) }
+    }
+
     fun exportFolderAsZip(folderName: String) {
         coroutineScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             try {
@@ -300,7 +322,7 @@ fun MainWorkspaceScreen(
                         val fileName = "${index + 1}_${note.title.replace("[^a-zA-Z0-9.-]".toRegex(), "_")}.txt"
                         val entry = ZipEntry(fileName)
                         zos.putNextEntry(entry)
-                        val noteBody = "TITLE: ${note.title}\nCATEGORY: ${note.category}\nDATE: ${Date(note.updatedAt)}\n\n${note.content}"
+                        val noteBody = "TITLE: ${note.title}\nCATEGORY: ${note.category}\nDATE: ${Date(note.updatedAt)}\n\n${com.example.ui.util.ImageMarkers.strip(note.content)}"
                         zos.write(noteBody.toByteArray())
                         zos.closeEntry()
                     }
@@ -475,14 +497,38 @@ fun MainWorkspaceScreen(
 
                 Spacer(modifier = Modifier.height(10.dp))
 
-                // Horizontal Folder Filter Chips
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
+                // Horizontal Folder Filter Chips — long-press a chip, then drag it left/right to reorder
+                // (Telegram style). A long-press that is released without moving opens the folder menu.
+                val chipListState = rememberLazyListState()
+                var chipOrder by remember { mutableStateOf(folderChips) }
+                var draggingFolder by remember { mutableStateOf<String?>(null) }
+                var dragOffsetX by remember { mutableFloatStateOf(0f) }
+                var dragMoved by remember { mutableStateOf(false) }
+                androidx.compose.runtime.LaunchedEffect(folderChips) {
+                    if (draggingFolder == null) chipOrder = folderChips
+                }
+                val chipSpacingPx = with(androidx.compose.ui.platform.LocalDensity.current) { 8.dp.toPx() }
+
+                fun finishChipDrag(folder: String) {
+                    val moved = dragMoved
+                    draggingFolder = null
+                    dragOffsetX = 0f
+                    dragMoved = false
+                    if (moved) {
+                        // keep hidden folders' relative order too, then persist
+                        val keep = (folderOrder + customFolders).distinct().filter { it !in chipOrder }
+                        preferences.setFolderOrder(chipOrder + keep)
+                    } else {
+                        longPressedFolder = folder
+                    }
+                }
+
+                LazyRow(
+                    state = chipListState,
+                    modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    folderChips.forEach { folder ->
+                    items(chipOrder, key = { it }) { folder ->
                         val isSelected = selectedFolder == folder
                         val isFolderLocked = lockedFolders.contains(folder)
 
@@ -517,9 +563,26 @@ fun MainWorkspaceScreen(
                             else -> CrimsonPrimary
                         }
 
+                        val isDragging = draggingFolder == folder
                         Box(
                             modifier = Modifier
-                                .graphicsLayer { scaleX = chipScale; scaleY = chipScale }
+                                .then(
+                                    // neighbours glide out of the way with a spring; the dragged chip follows the finger
+                                    if (isDragging) Modifier.zIndex(1f)
+                                    else Modifier.animateItem(
+                                        placementSpec = spring(
+                                            dampingRatio = Spring.DampingRatioLowBouncy,
+                                            stiffness = Spring.StiffnessMediumLow
+                                        )
+                                    )
+                                )
+                                .graphicsLayer {
+                                    val lift = if (isDragging) 1.08f else 1f
+                                    scaleX = chipScale * lift
+                                    scaleY = chipScale * lift
+                                    translationX = if (isDragging) dragOffsetX else 0f
+                                    shadowElevation = if (isDragging) 18f else 0f
+                                }
                                 .clip(RoundedCornerShape(12.dp))
                                 .background(
                                     if (isSelected) CrimsonPrimary
@@ -530,16 +593,49 @@ fun MainWorkspaceScreen(
                                     if (isSelected) CrimsonPrimary else (if (isDarkMode) Color(0x26FFFFFF) else Color(0x1F718096)),
                                     RoundedCornerShape(12.dp)
                                 )
-                                .combinedClickable(
+                                .pointerInput(folder) {
+                                    detectDragGesturesAfterLongPress(
+                                        onDragStart = {
+                                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                            draggingFolder = folder
+                                            dragOffsetX = 0f
+                                            dragMoved = false
+                                        },
+                                        onDrag = { change, amount ->
+                                            change.consume()
+                                            dragOffsetX += amount.x
+                                            if (kotlin.math.abs(dragOffsetX) > 14f) dragMoved = true
+                                            val infos = chipListState.layoutInfo.visibleItemsInfo
+                                            val me = infos.firstOrNull { it.key == folder }
+                                            if (me != null) {
+                                                val centre = me.offset + dragOffsetX + me.size / 2f
+                                                val hit = infos.firstOrNull {
+                                                    it.key != folder && it.key in chipOrder &&
+                                                        centre >= it.offset && centre <= it.offset + it.size
+                                                }
+                                                if (hit != null) {
+                                                    val from = chipOrder.indexOf(folder)
+                                                    val to = chipOrder.indexOf(hit.key as String)
+                                                    if (from >= 0 && to >= 0 && from != to) {
+                                                        chipOrder = chipOrder.toMutableList().apply { add(to, removeAt(from)) }
+                                                        // the chip's slot moved by the neighbour's width: compensate so it stays under the finger
+                                                        val shift = hit.size + chipSpacingPx
+                                                        dragOffsetX -= if (to > from) shift else -shift
+                                                        haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                    }
+                                                }
+                                            }
+                                        },
+                                        onDragEnd = { finishChipDrag(folder) },
+                                        onDragCancel = { finishChipDrag(folder) }
+                                    )
+                                }
+                                .clickable(
                                     interactionSource = chipInteraction,
                                     indication = null,
                                     onClick = {
                                         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                         openFolder(folder)
-                                    },
-                                    onLongClick = {
-                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                        longPressedFolder = folder
                                     }
                                 )
                                 .padding(horizontal = 11.dp, vertical = 7.dp)
@@ -576,11 +672,22 @@ fun MainWorkspaceScreen(
                                     fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
                                     color = if (isSelected) Color.White else (if (isDarkMode) Color.White.copy(0.85f) else Color(0xFF333333))
                                 )
+                                // Locked folders never reveal how many notes they hold
+                                if (!isFolderLocked) {
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = "${folderCounts[folder] ?: 0}",
+                                        fontSize = 10.5.sp,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = if (isSelected) Color.White.copy(0.85f) else CrimsonPrimary
+                                    )
+                                }
                             }
                         }
                     }
 
                     // "Add Folder" chip — Item 7: always the last item in the row.
+                    item(key = "__add_folder__") {
                     Box(
                         modifier = Modifier
                             .clip(RoundedCornerShape(12.dp))
@@ -611,16 +718,16 @@ fun MainWorkspaceScreen(
                             )
                         }
                     }
+                    }
                 }
 
                 Spacer(modifier = Modifier.height(10.dp))
 
                 // Notes List with Compact Balanced Size (PART A Item 1)
+                Box(modifier = Modifier.fillMaxWidth().weight(1f)) {
                 if (filteredNotes.isEmpty()) {
                     Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .weight(1f),
+                        modifier = Modifier.fillMaxSize(),
                         contentAlignment = Alignment.Center
                     ) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -646,10 +753,11 @@ fun MainWorkspaceScreen(
                         }
                     }
                 } else {
+                    // key(selectedFolder): a new list per folder, so every folder switch replays the
+                    // subtle staggered fade / slide-up (this has nothing to do with the editor).
+                    androidx.compose.runtime.key(selectedFolder) {
                     LazyColumn(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .weight(1f),
+                        modifier = Modifier.fillMaxSize(),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                         contentPadding = PaddingValues(bottom = 80.dp)
                     ) {
@@ -695,6 +803,10 @@ fun MainWorkspaceScreen(
                             }
                         }
                     }
+                    }
+                }
+                // liquid / glass wave sweeping across the content when the folder changes
+                LiquidWaveOverlay(trigger = selectedFolder, color = CrimsonPrimary)
                 }
             }
 
@@ -1160,7 +1272,7 @@ fun CompactNoteCard(
     val displayContent = if (note.category == "API" && blurApis) {
         "•••••••••••••••••••• (API Key Blurred)"
     } else {
-        note.content.lines().firstOrNull { it.isNotBlank() } ?: ""
+        com.example.ui.util.ImageMarkers.strip(note.content).lines().firstOrNull { it.isNotBlank() } ?: ""
     }
 
     val formattedTime = remember(note.updatedAt) {
@@ -1300,7 +1412,7 @@ fun CompactNoteCard(
             val clipboard = LocalClipboardManager.current
             IconButton(
                 onClick = {
-                    clipboard.setText(androidx.compose.ui.text.AnnotatedString(note.content))
+                    clipboard.setText(androidx.compose.ui.text.AnnotatedString(com.example.ui.util.ImageMarkers.strip(note.content)))
                     Toast.makeText(context, "Note content copied", Toast.LENGTH_SHORT).show()
                     onCopy()
                 },

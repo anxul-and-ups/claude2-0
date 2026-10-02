@@ -32,11 +32,22 @@ object AttachmentStorage {
                 }
             } ?: return null
 
+            val isImage = mimeType.startsWith("image/")
+            var w = 0
+            var h = 0
+            if (isImage) {
+                val o = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                android.graphics.BitmapFactory.decodeFile(destFile.absolutePath, o)
+                w = o.outWidth.coerceAtLeast(0)
+                h = o.outHeight.coerceAtLeast(0)
+            }
             RichTextFormatter.AttachmentInfo(
                 uri = destFile.absolutePath,
                 fileName = originalName,
                 mimeType = mimeType,
-                sizeBytes = destFile.length()
+                sizeBytes = destFile.length(),
+                srcWidth = w,
+                srcHeight = h
             )
         } catch (e: Exception) {
             null

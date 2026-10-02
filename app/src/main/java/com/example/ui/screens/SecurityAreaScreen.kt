@@ -283,7 +283,7 @@ fun SecurityAreaScreen(
                                                     }
                                                     Spacer(Modifier.height(4.dp))
                                                     Text(
-                                                        note.content.take(60), fontSize = 12.sp,
+                                                        com.example.ui.util.ImageMarkers.strip(note.content).take(60), fontSize = 12.sp,
                                                         color = if (isDarkMode) Color.White.copy(0.6f) else Color.DarkGray,
                                                         maxLines = 1, overflow = TextOverflow.Ellipsis
                                                     )
