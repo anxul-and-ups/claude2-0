@@ -25,7 +25,7 @@ android {
     create("persistent") {
       val keystorePath = System.getenv("KEYSTORE_PATH")
         ?: providers.gradleProperty("AU_KEYSTORE_PATH").orNull
-        ?: "${rootDir}/my-upload-key.jks"
+        ?: "${project.rootDir}/my-upload-key.jks"
       val keystorePassword = System.getenv("STORE_PASSWORD")
         ?: providers.gradleProperty("AU_KEYSTORE_PASSWORD").orNull
         ?: "CodeForgeAU2026!"

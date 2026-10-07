@@ -32,6 +32,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -762,7 +763,7 @@ fun MainWorkspaceScreen(
                             // Keep folder changes responsive: a short stagger is enough to
                             // communicate movement without animating a long list for hundreds of ms.
                             val staggerDelay = index.coerceAtMost(3) * 28
-                            AnimatedVisibility(
+                            androidx.compose.animation.AnimatedVisibility(
                                 visible = true,
                                 enter = fadeIn(tween(180, delayMillis = staggerDelay)) +
                                     slideInVertically(
