@@ -22,12 +22,21 @@ android {
   }
 
   signingConfigs {
-    create("release") {
-      val keystorePath = System.getenv("KEYSTORE_PATH") ?: "${rootDir}/my-upload-key.jks"
+    create("persistent") {
+      val keystorePath = System.getenv("KEYSTORE_PATH")
+        ?: providers.gradleProperty("AU_KEYSTORE_PATH").orNull
+        ?: "${rootDir}/my-upload-key.jks"
+      val keystorePassword = System.getenv("STORE_PASSWORD")
+        ?: providers.gradleProperty("AU_KEYSTORE_PASSWORD").orNull
+        ?: "CodeForgeAU2026!"
+      val keyPasswordValue = System.getenv("KEY_PASSWORD")
+        ?: providers.gradleProperty("AU_KEY_PASSWORD").orNull
+        ?: "CodeForgeAU2026!"
+
       storeFile = file(keystorePath)
-      storePassword = System.getenv("STORE_PASSWORD")
+      storePassword = keystorePassword
       keyAlias = "upload"
-      keyPassword = System.getenv("KEY_PASSWORD")
+      keyPassword = keyPasswordValue
     }
   }
 
@@ -36,9 +45,13 @@ android {
       isCrunchPngs = false
       isMinifyEnabled = false
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-      signingConfig = signingConfigs.getByName("release")
+      signingConfig = signingConfigs.getByName("persistent")
     }
-    debug { }
+    debug {
+      // Use the same persistent signing key as release so every locally built
+      // APK can update the previously installed app without uninstalling it.
+      signingConfig = signingConfigs.getByName("persistent")
+    }
   }
   compileOptions {
     sourceCompatibility = JavaVersion.VERSION_11

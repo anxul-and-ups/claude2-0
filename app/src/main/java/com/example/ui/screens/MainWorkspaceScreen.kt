@@ -4,7 +4,6 @@ import android.content.Context
 import android.content.Intent
 import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.fadeIn
@@ -33,7 +32,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -45,7 +43,6 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.input.pointer.pointerInput
-import com.example.ui.components.LiquidWaveOverlay
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
@@ -762,19 +759,15 @@ fun MainWorkspaceScreen(
                         contentPadding = PaddingValues(bottom = 80.dp)
                     ) {
                         itemsIndexed(filteredNotes, key = { _, note -> note.id }) { index, note ->
-                            // Staggered fade + slide-in. MutableTransitionState(false -> true)
-                            // makes the enter animation actually run on first composition.
-                            // Delay is capped so items far down the list don't wait seconds.
-                            val enterState = remember(note.id) {
-                                MutableTransitionState(false).apply { targetState = true }
-                            }
-                            val staggerDelay = index.coerceAtMost(8) * 60
-                            androidx.compose.animation.AnimatedVisibility(
-                                visibleState = enterState,
-                                enter = fadeIn(tween(350, delayMillis = staggerDelay)) +
+                            // Keep folder changes responsive: a short stagger is enough to
+                            // communicate movement without animating a long list for hundreds of ms.
+                            val staggerDelay = index.coerceAtMost(3) * 28
+                            AnimatedVisibility(
+                                visible = true,
+                                enter = fadeIn(tween(180, delayMillis = staggerDelay)) +
                                     slideInVertically(
-                                        tween(350, delayMillis = staggerDelay),
-                                        initialOffsetY = { it / 3 }
+                                        tween(180, delayMillis = staggerDelay),
+                                        initialOffsetY = { it / 8 }
                                     )
                             ) {
                             CompactNoteCard(
@@ -805,8 +798,6 @@ fun MainWorkspaceScreen(
                     }
                     }
                 }
-                // liquid / glass wave sweeping across the content when the folder changes
-                LiquidWaveOverlay(trigger = selectedFolder, color = CrimsonPrimary)
                 }
             }
 

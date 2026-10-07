@@ -23,9 +23,6 @@ import dev.chrisbanes.haze.hazeChild
 import dev.chrisbanes.haze.HazeStyle
 import dev.chrisbanes.haze.HazeTint
 import dev.chrisbanes.haze.hazeSource
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
-import androidx.compose.ui.draw.scale
 
 /**
  * ═══════════════════════════════════════════════════════════
@@ -65,12 +62,6 @@ fun HazeGlassCard(
     content: @Composable BoxScope.() -> Unit
 ) {
     val interactionSource = remember { MutableInteractionSource() }
-
-    val pressScale by animateFloatAsState(
-        targetValue = if (onClick != null) 1f else 1f,
-        animationSpec = tween(150),
-        label = "glass_press"
-    )
 
     val tintColor = if (isDarkMode) {
         if (strong) Color(0x66202020) else Color(0x33FFFFFF)
@@ -122,7 +113,6 @@ fun HazeGlassCard(
 
     Box(
         modifier = modifier
-            .scale(pressScale)
             .clip(shape)
             .then(
                 if (ENABLE_HAZE_BLUR) {

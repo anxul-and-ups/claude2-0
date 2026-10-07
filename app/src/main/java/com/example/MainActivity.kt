@@ -238,38 +238,80 @@ fun AuNotesApp(
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        // Screen-to-screen transitions: fade + gentle slide + subtle scale on springs. Forward
-        // navigation enters from the right, going back to the main screen enters from the left.
-        // Typing, caret scrolling and folder switching never touch this — it only reacts to a
-        // change of the top-level screen.
+        // Context-aware screen transitions. Each screen family gets its own short,
+        // lightweight motion instead of one global fade/slide recipe.
         androidx.compose.animation.AnimatedContent(
             targetState = currentScreen,
             contentKey = { it::class },
             transitionSpec = {
-                val toMain = targetState is Screen.MainWorkspace
-                val splash = initialState is Screen.Splash || targetState is Screen.Splash
-                if (splash) {
-                    androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(350)) togetherWith
-                        androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(250))
-                } else {
-                    val dir = if (toMain) -1 else 1
-                    (androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(240, delayMillis = 40)) +
-                        androidx.compose.animation.slideInHorizontally(
-                            animationSpec = androidx.compose.animation.core.spring(
-                                dampingRatio = androidx.compose.animation.core.Spring.DampingRatioNoBouncy,
-                                stiffness = androidx.compose.animation.core.Spring.StiffnessMediumLow
-                            ),
-                            initialOffsetX = { full -> dir * full / 8 }
-                        ) +
-                        androidx.compose.animation.scaleIn(
-                            initialScale = 0.96f,
-                            animationSpec = androidx.compose.animation.core.tween(280)
-                        )) togetherWith
-                        (androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(160)) +
-                            androidx.compose.animation.slideOutHorizontally(
-                                animationSpec = androidx.compose.animation.core.tween(220),
-                                targetOffsetX = { full -> -dir * full / 12 }
-                            ))
+                when {
+                    targetState is Screen.Splash || initialState is Screen.Splash -> {
+                        androidx.compose.animation.fadeIn(
+                            androidx.compose.animation.core.tween(260)
+                        ) togetherWith androidx.compose.animation.fadeOut(
+                            androidx.compose.animation.core.tween(180)
+                        )
+                    }
+                    targetState is Screen.EditNote -> {
+                        (androidx.compose.animation.fadeIn(
+                            androidx.compose.animation.core.tween(180)
+                        ) + androidx.compose.animation.slideInVertically(
+                            animationSpec = androidx.compose.animation.core.tween(220),
+                            initialOffsetY = { it / 10 }
+                        )) togetherWith androidx.compose.animation.fadeOut(
+                            androidx.compose.animation.core.tween(120)
+                        )
+                    }
+                    targetState is Screen.ReadNote -> {
+                        (androidx.compose.animation.fadeIn(
+                            androidx.compose.animation.core.tween(170)
+                        ) + androidx.compose.animation.slideInHorizontally(
+                            animationSpec = androidx.compose.animation.core.tween(210),
+                            initialOffsetX = { it / 12 }
+                        )) togetherWith androidx.compose.animation.fadeOut(
+                            androidx.compose.animation.core.tween(120)
+                        )
+                    }
+                    targetState is Screen.MainWorkspace -> {
+                        (androidx.compose.animation.fadeIn(
+                            androidx.compose.animation.core.tween(190)
+                        ) + androidx.compose.animation.scaleIn(
+                            initialScale = 0.985f,
+                            animationSpec = androidx.compose.animation.core.tween(190)
+                        )) togetherWith androidx.compose.animation.fadeOut(
+                            androidx.compose.animation.core.tween(120)
+                        )
+                    }
+                    targetState is Screen.PdfViewer || targetState is Screen.StorageEditor -> {
+                        (androidx.compose.animation.fadeIn(
+                            androidx.compose.animation.core.tween(160)
+                        ) + androidx.compose.animation.slideInVertically(
+                            animationSpec = androidx.compose.animation.core.tween(200),
+                            initialOffsetY = { it / 14 }
+                        )) togetherWith androidx.compose.animation.fadeOut(
+                            androidx.compose.animation.core.tween(110)
+                        )
+                    }
+                    targetState is Screen.Settings ||
+                        targetState is Screen.SecurityArea ||
+                        targetState is Screen.SecuritySettings ||
+                        targetState is Screen.ThemeSettings -> {
+                        (androidx.compose.animation.fadeIn(
+                            androidx.compose.animation.core.tween(180)
+                        ) + androidx.compose.animation.slideInHorizontally(
+                            animationSpec = androidx.compose.animation.core.tween(190),
+                            initialOffsetX = { it / 16 }
+                        )) togetherWith androidx.compose.animation.fadeOut(
+                            androidx.compose.animation.core.tween(110)
+                        )
+                    }
+                    else -> {
+                        androidx.compose.animation.fadeIn(
+                            androidx.compose.animation.core.tween(170)
+                        ) togetherWith androidx.compose.animation.fadeOut(
+                            androidx.compose.animation.core.tween(110)
+                        )
+                    }
                 }
             },
             label = "screen_transition"
