@@ -107,6 +107,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -305,8 +306,8 @@ fun NoteEditorScreen(
     var showParagraphStyleSheet by remember { mutableStateOf(false) }
     // "Save in": null = automatic (old behaviour), otherwise the folder the user picked
     var saveInChoice by remember { mutableStateOf<String?>(null) }
-    var showSaveInMenu by remember { mutableStateOf(false) }
-    val customFoldersList by preferences.customFolders.collectAsState()
+    val customFoldersList: List<String> by preferences.customFolders.collectAsState(initial = emptyList())
+    val hiddenFoldersSet: Set<String> by preferences.hiddenFolders.collectAsState(initial = emptySet())
     val hiddenFoldersSet by preferences.hiddenFolders.collectAsState()
     var textLayout by remember { mutableStateOf<TextLayoutResult?>(null) }
     var fieldWidthPx by remember { mutableFloatStateOf(0f) }

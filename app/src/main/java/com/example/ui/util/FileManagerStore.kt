@@ -108,15 +108,17 @@ class FileManagerStore(context: Context) {
     } catch (_: Exception) { null }
 
     /** Copies a picked content:// document (e.g. a PDF) into app storage, unchanged. */
-    fun importIntoAppStorage(uri: Uri, folder: String? = null): File? = try {
-        val name = (displayName(uri) ?: "imported_${System.currentTimeMillis()}").replace(Regex("[\\\\/:*?\"<>|]"), "_")
-        val dest = uniqueFile(documentsDir, name)
-        appContext.contentResolver.openInputStream(uri)?.use { input ->
-            dest.outputStream().use { out -> input.copyTo(out) }
-        } ?: return null
-        if (folder != null) assign(dest.absolutePath, folder)
-        dest
-    } catch (_: Exception) { null }
+    fun importIntoAppStorage(uri: Uri, folder: String? = null): File? {
+        return try {
+            val name = (displayName(uri) ?: "imported_${System.currentTimeMillis()}").replace(Regex("[\\\\/:*?\"<>|]"), "_")
+            val dest = uniqueFile(documentsDir, name)
+            appContext.contentResolver.openInputStream(uri)?.use { input ->
+                dest.outputStream().use { out -> input.copyTo(out) }
+            } ?: return null
+            if (folder != null) assign(dest.absolutePath, folder)
+            dest
+        } catch (_: Exception) { null }
+    }
 
     /** Copies a file that lives outside app storage (e.g. Downloads) into the app. */
     fun importFile(source: File, folder: String? = null): File? = try {
