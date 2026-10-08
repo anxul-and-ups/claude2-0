@@ -54,6 +54,16 @@ import com.example.ui.screens.TableEditorScreen
 import com.example.ui.theme.MyApplicationTheme
 import kotlinx.coroutines.launch
 
+/** How "deep" a screen is. Forward = deeper (slide in), back = shallower (reverse). */
+fun screenDepth(screen: Screen): Int = when (screen) {
+    is Screen.Splash -> 0
+    is Screen.MainWorkspace -> if (screen.pickForHide) 4 else 1
+    is Screen.Settings, is Screen.RecycleBin, is Screen.ReadNote, is Screen.NameGenerator,
+    is Screen.CommandMode, is Screen.StorageEditor, is Screen.HtmlViewer -> 2
+    is Screen.EditNote, is Screen.SecurityArea, is Screen.ApiRoom, is Screen.ThemeSettings, is Screen.PdfViewer -> 3
+    is Screen.SecuritySettings, is Screen.TableEditor -> 4
+}
+
 sealed class Screen {
     data object Splash : Screen()
     data class MainWorkspace(val initialFolder: String = "All Notes", val pickForHide: Boolean = false) : Screen()
@@ -68,6 +78,7 @@ sealed class Screen {
     data object CommandMode : Screen()
     data class TableEditor(val initialTableData: String, val onSaved: (String) -> Unit) : Screen()
     data object RecycleBin : Screen()
+    data object HtmlViewer : Screen()
     data object StorageEditor : Screen()
     data class PdfViewer(val uri: android.net.Uri, val returnTo: Screen) : Screen()
 }
@@ -238,80 +249,43 @@ fun AuNotesApp(
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        // Context-aware screen transitions. Each screen family gets its own short,
-        // lightweight motion instead of one global fade/slide recipe.
+        // One light transition used everywhere: a short slide + fade. Going deeper slides the new
+        // screen in from the right; going back plays the exact reverse (the screen you leave slides
+        // out to the right). Same-level switches just cross-fade. No springs, no scaling, so it
+        // stays cheap even while two full screens are on stage.
         androidx.compose.animation.AnimatedContent(
             targetState = currentScreen,
             contentKey = { it::class },
             transitionSpec = {
+                val from = screenDepth(initialState)
+                val to = screenDepth(targetState)
+                val ease = androidx.compose.animation.core.FastOutSlowInEasing
+                val dur = 220
                 when {
-                    targetState is Screen.Splash || initialState is Screen.Splash -> {
-                        androidx.compose.animation.fadeIn(
-                            androidx.compose.animation.core.tween(260)
-                        ) togetherWith androidx.compose.animation.fadeOut(
-                            androidx.compose.animation.core.tween(180)
-                        )
+                    to > from -> {
+                        (androidx.compose.animation.slideInHorizontally(
+                            androidx.compose.animation.core.tween(dur, easing = ease)
+                        ) { (it * 0.22f).toInt() } +
+                            androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(dur, easing = ease))) togetherWith
+                            (androidx.compose.animation.slideOutHorizontally(
+                                androidx.compose.animation.core.tween(dur, easing = ease)
+                            ) { -(it * 0.08f).toInt() } +
+                                androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(dur, easing = ease)))
                     }
-                    targetState is Screen.EditNote -> {
-                        (androidx.compose.animation.fadeIn(
-                            androidx.compose.animation.core.tween(180)
-                        ) + androidx.compose.animation.slideInVertically(
-                            animationSpec = androidx.compose.animation.core.tween(220),
-                            initialOffsetY = { it / 10 }
-                        )) togetherWith androidx.compose.animation.fadeOut(
-                            androidx.compose.animation.core.tween(120)
-                        )
+                    to < from -> {
+                        // exact reverse of the forward motion; the leaving screen stays on top
+                        ((androidx.compose.animation.slideInHorizontally(
+                            androidx.compose.animation.core.tween(dur, easing = ease)
+                        ) { -(it * 0.08f).toInt() } +
+                            androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(dur, easing = ease))) togetherWith
+                            (androidx.compose.animation.slideOutHorizontally(
+                                androidx.compose.animation.core.tween(dur, easing = ease)
+                            ) { (it * 0.22f).toInt() } +
+                                androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(dur, easing = ease))))
+                            .apply { targetContentZIndex = -1f }
                     }
-                    targetState is Screen.ReadNote -> {
-                        (androidx.compose.animation.fadeIn(
-                            androidx.compose.animation.core.tween(170)
-                        ) + androidx.compose.animation.slideInHorizontally(
-                            animationSpec = androidx.compose.animation.core.tween(210),
-                            initialOffsetX = { it / 12 }
-                        )) togetherWith androidx.compose.animation.fadeOut(
-                            androidx.compose.animation.core.tween(120)
-                        )
-                    }
-                    targetState is Screen.MainWorkspace -> {
-                        (androidx.compose.animation.fadeIn(
-                            androidx.compose.animation.core.tween(190)
-                        ) + androidx.compose.animation.scaleIn(
-                            initialScale = 0.985f,
-                            animationSpec = androidx.compose.animation.core.tween(190)
-                        )) togetherWith androidx.compose.animation.fadeOut(
-                            androidx.compose.animation.core.tween(120)
-                        )
-                    }
-                    targetState is Screen.PdfViewer || targetState is Screen.StorageEditor -> {
-                        (androidx.compose.animation.fadeIn(
-                            androidx.compose.animation.core.tween(160)
-                        ) + androidx.compose.animation.slideInVertically(
-                            animationSpec = androidx.compose.animation.core.tween(200),
-                            initialOffsetY = { it / 14 }
-                        )) togetherWith androidx.compose.animation.fadeOut(
-                            androidx.compose.animation.core.tween(110)
-                        )
-                    }
-                    targetState is Screen.Settings ||
-                        targetState is Screen.SecurityArea ||
-                        targetState is Screen.SecuritySettings ||
-                        targetState is Screen.ThemeSettings -> {
-                        (androidx.compose.animation.fadeIn(
-                            androidx.compose.animation.core.tween(180)
-                        ) + androidx.compose.animation.slideInHorizontally(
-                            animationSpec = androidx.compose.animation.core.tween(190),
-                            initialOffsetX = { it / 16 }
-                        )) togetherWith androidx.compose.animation.fadeOut(
-                            androidx.compose.animation.core.tween(110)
-                        )
-                    }
-                    else -> {
-                        androidx.compose.animation.fadeIn(
-                            androidx.compose.animation.core.tween(170)
-                        ) togetherWith androidx.compose.animation.fadeOut(
-                            androidx.compose.animation.core.tween(110)
-                        )
-                    }
+                    else -> androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(160)) togetherWith
+                        androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(120))
                 }
             },
             label = "screen_transition"
@@ -513,6 +487,13 @@ fun AuNotesApp(
                 )
             }
 
+            is Screen.HtmlViewer -> {
+                com.example.ui.screens.HtmlViewerScreen(
+                    repository = repository,
+                    onBack = { currentScreen = Screen.MainWorkspace() }
+                )
+            }
+
             is Screen.NameGenerator -> {
                 NameGeneratorScreen(
                     repository = repository,
@@ -613,6 +594,10 @@ fun AuNotesApp(
             onOpenNameGenerator = {
                 isSidebarOpen = false
                 currentScreen = Screen.NameGenerator
+            },
+            onOpenHtmlViewer = {
+                isSidebarOpen = false
+                currentScreen = Screen.HtmlViewer
             },
             onOpenCommandMode = {
                 isSidebarOpen = false

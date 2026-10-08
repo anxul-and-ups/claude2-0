@@ -80,7 +80,6 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import coil.compose.AsyncImage
 import com.example.R
 import com.example.data.model.AutoClassifier
 import com.example.data.model.NoteEntity

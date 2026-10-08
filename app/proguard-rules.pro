@@ -19,3 +19,7 @@
 # If you keep the line number information, uncomment this to
 # hide the original source file name.
 #-renamesourcefileattribute SourceFile
+
+# AU Notes — keep Room entities and the JSON helpers used by org.json reflection-free code paths
+-keep class com.example.data.model.** { *; }
+-dontwarn org.slf4j.**

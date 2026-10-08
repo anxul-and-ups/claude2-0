@@ -1188,36 +1188,6 @@ fun AiChatScreen(
 }
 
 @Composable
-private fun QuickActionButton(
-    label: String,
-    isDarkMode: Boolean,
-    modifier: Modifier = Modifier,
-    onClick: () -> Unit
-) {
-    GlassCard(
-        modifier = modifier,
-        shape = RoundedCornerShape(10.dp),
-        isDarkMode = isDarkMode,
-        elevation = 2.dp,
-        onClick = onClick
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 6.dp),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                text = label,
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Medium,
-                color = if (isDarkMode) Color.White.copy(alpha = 0.9f) else Color.DarkGray
-            )
-        }
-    }
-}
-
-@Composable
 private fun RenderMessageWithCodeBlocks(text: String, isDarkMode: Boolean) {
     val parts = text.split("```")
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
