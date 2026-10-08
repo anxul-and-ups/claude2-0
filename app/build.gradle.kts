@@ -24,8 +24,8 @@ android {
   signingConfigs {
     create("persistent") {
       val keystorePath = System.getenv("KEYSTORE_PATH")
-        ?: providers.gradleProperty("AU_KEYSTORE_PATH").orNull
-        ?: "${rootDir}/my-upload-key.jks"
+        ?: providers.gradleProperty("AU_KEYSTORE_PATH").orNull?.let { rootProject.file(it).absolutePath }
+        ?: rootProject.file("my-upload-key.jks").absolutePath
       val keystorePassword = System.getenv("STORE_PASSWORD")
         ?: providers.gradleProperty("AU_KEYSTORE_PASSWORD").orNull
         ?: "CodeForgeAU2026!"
