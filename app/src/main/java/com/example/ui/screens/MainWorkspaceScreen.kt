@@ -110,7 +110,6 @@ import com.example.data.preferences.AppPreferences
 import com.example.data.repository.NoteRepository
 import com.example.ui.components.ExportDialog
 import com.example.ui.components.GlassBackground
-import dev.chrisbanes.haze.HazeState
 import com.example.ui.components.HazeGlassCard
 import com.example.ui.components.NeuIconButton
 import com.example.ui.components.PinLockDialog
@@ -148,7 +147,6 @@ fun MainWorkspaceScreen(
     onPickForHideCancel: () -> Unit = {}
 ) {
     val context = LocalContext.current
-    val hazeState = remember { HazeState() }
     val haptic = LocalHapticFeedback.current
     val clipboard = LocalClipboardManager.current
     val coroutineScope = rememberCoroutineScope()
@@ -343,7 +341,7 @@ fun MainWorkspaceScreen(
         }
     }
 
-    GlassBackground(isDarkMode = isDarkMode, hazeState = hazeState) {
+    GlassBackground(isDarkMode = isDarkMode) {
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -773,7 +771,6 @@ fun MainWorkspaceScreen(
                             ) {
                             CompactNoteCard(
                                 note = note,
-                                hazeState = hazeState,
                                 isDarkMode = isDarkMode,
                                 blurApis = blurApis,
                                 selectionMode = pickForHide,
@@ -1091,7 +1088,6 @@ fun MainWorkspaceScreen(
     if (showAddFolderDialog) {
         androidx.compose.ui.window.Dialog(onDismissRequest = { showAddFolderDialog = false; newFolderNameInput = "" }) {
             HazeGlassCard(
-                hazeState = hazeState,
                 modifier = Modifier.fillMaxWidth().padding(16.dp),
                 shape = RoundedCornerShape(28.dp),
                 isDarkMode = isDarkMode,
@@ -1244,7 +1240,6 @@ fun MainWorkspaceScreen(
 @Composable
 fun CompactNoteCard(
     note: NoteEntity,
-    hazeState: HazeState,
     isDarkMode: Boolean,
     blurApis: Boolean,
     onOpen: () -> Unit,
@@ -1287,7 +1282,6 @@ fun CompactNoteCard(
     // Compact Card — Item 6: reduced from 10dp/44dp to 7dp/36dp so cards read
     // as smaller/denser while keeping the existing glass design language.
     HazeGlassCard(
-        hazeState = hazeState,
         modifier = Modifier
             .fillMaxWidth()
             .graphicsLayer { scaleX = pressScale; scaleY = pressScale }

@@ -16,12 +16,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import dev.chrisbanes.haze.HazeState
 
 /** Frosted-glass surface: translucent gradient + soft edge highlight. No blur, no extra layers. */
 @Composable
 fun HazeGlassCard(
-    hazeState: HazeState,
     modifier: Modifier = Modifier,
     shape: Shape = RoundedCornerShape(20.dp),
     isDarkMode: Boolean = true,
