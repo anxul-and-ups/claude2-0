@@ -16,12 +16,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-
-/**
- * Placeholder kept so existing call sites compile. The real-time blur library was removed
- * (it was already switched off) — glass surfaces are now a cheap translucent gradient.
- */
-class HazeState
+import dev.chrisbanes.haze.HazeState
 
 /** Frosted-glass surface: translucent gradient + soft edge highlight. No blur, no extra layers. */
 @Composable
