@@ -14,28 +14,20 @@ import com.example.ui.theme.NeuLightBg
 
 /**
  * Neumorphic Canvas Background.
- * If hazeState is provided, marks this as the SOURCE for Haze blur —
- * meaning any HazeGlassCard placed on top will blur this background.
  */
 @Composable
 fun GlassBackground(
     isDarkMode: Boolean = true,
-    hazeState: HazeState? = null,
     content: @Composable () -> Unit
 ) {
     val baseBg = if (isDarkMode) NeuDarkBg else NeuLightBg
-
-    val bgModifier = Modifier.fillMaxSize()
 
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(baseBg)
     ) {
-        val hasPhoto = LocalAppBackdrop.current.image != null
-        if (hasPhoto) {
-            BackdropImage(isDarkMode = isDarkMode, modifier = bgModifier)
-        } else Canvas(modifier = bgModifier) {
+        Canvas(modifier = Modifier.fillMaxSize()) {
             val width = size.width
             val height = size.height
 

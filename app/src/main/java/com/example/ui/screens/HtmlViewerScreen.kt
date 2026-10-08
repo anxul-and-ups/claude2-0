@@ -192,18 +192,18 @@ fun HtmlViewerScreen(
                             )
                         }
                         Box(modifier = Modifier.weight(1f).horizontalScroll(rememberScrollState()).padding(8.dp)) {
-                            BasicTextField(
-                                value = text,
-                                onValueChange = { text = it },
-                                textStyle = style,
-                                cursorBrush = SolidColor(CrimsonPrimary),
-                                softWrap = false,
-                                modifier = Modifier.widthIn(min = 600.dp).height((lineCount * 19 + 40).dp.coerceAtLeast(300.dp)),
-                                decorationBox = { inner ->
-                                    if (text.isEmpty()) Text("Put your HTML text here", style = style.copy(color = muted))
-                                    inner()
+                            Box {
+                                BasicTextField(
+                                    value = text,
+                                    onValueChange = { text = it },
+                                    textStyle = style,
+                                    cursorBrush = SolidColor(CrimsonPrimary),
+                                    modifier = Modifier.widthIn(min = 600.dp).height((lineCount * 19 + 40).dp.coerceAtLeast(300.dp))
+                                )
+                                if (text.isEmpty()) {
+                                    Text("Put your HTML text here", style = style.copy(color = muted))
                                 }
-                            )
+                            }
                         }
                     }
                 }
