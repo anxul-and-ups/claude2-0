@@ -35,25 +35,25 @@ jobs:
             chmod +x ./gradlew
           fi
 
-      - name: Build Debug APK with Gradle
+      - name: Build Release APK with Gradle
         run: |
           if [ -f "./gradlew" ]; then
-            ./gradlew assembleDebug --stacktrace
+            ./gradlew assembleRelease --stacktrace
           else
-            gradle assembleDebug --stacktrace
+            gradle assembleRelease --stacktrace
           fi
 
       - name: Find and Prepare APK
         id: find_apk
         run: |
           mkdir -p build-apks
-          find app/build/outputs/apk -name "*.apk" -exec cp {} build-apks/ \;
+          find app/build/outputs/apk/release -name "*.apk" -exec cp {} build-apks/ \;
           echo "Found APKs:"
           ls -la build-apks/
 
-      - name: Upload Debug APK Artifact
+      - name: Upload Release APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: AU-Notes-Debug-APK
+          name: AU-Notes-APK
           path: build-apks/*.apk
           retention-days: 30

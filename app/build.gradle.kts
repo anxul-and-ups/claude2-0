@@ -25,7 +25,7 @@ android {
     create("persistent") {
       val keystorePath = System.getenv("KEYSTORE_PATH")
         ?: providers.gradleProperty("AU_KEYSTORE_PATH").orNull
-        ?: "${project.rootDir}/my-upload-key.jks"
+        ?: "${rootDir}/my-upload-key.jks"
       val keystorePassword = System.getenv("STORE_PASSWORD")
         ?: providers.gradleProperty("AU_KEYSTORE_PASSWORD").orNull
         ?: "CodeForgeAU2026!"
@@ -43,7 +43,9 @@ android {
   buildTypes {
     release {
       isCrunchPngs = false
-      isMinifyEnabled = false
+      // R8 shrinking + resource shrinking: much smaller and faster than the debug build.
+      isMinifyEnabled = true
+      isShrinkResources = true
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
       signingConfig = signingConfigs.getByName("persistent")
     }
@@ -81,7 +83,6 @@ secrets {
 // This makes it easy to add them back in the future if needed.
 dependencies {
   implementation(platform(libs.androidx.compose.bom))
-  implementation(platform(libs.firebase.bom))
   // implementation(libs.accompanist.permissions)
   implementation(libs.androidx.activity.compose)
   implementation("androidx.biometric:biometric:1.2.0-alpha05")
@@ -107,8 +108,8 @@ dependencies {
   implementation(libs.androidx.room.runtime)
   implementation(libs.coil.compose)
   implementation(libs.haze)
-  implementation(libs.converter.moshi)
-  implementation(libs.firebase.ai)
+  // Installs the Compose baseline profile on first start (faster startup and scrolling)
+  implementation("androidx.profileinstaller:profileinstaller:1.4.1")
   // Uncomment to use Firestore:
   // implementation(libs.firebase.firestore)
 
@@ -118,15 +119,10 @@ dependencies {
   // implementation(libs.androidx.credentials)
   // implementation(libs.androidx.credentials.play.services)
   // implementation(libs.googleid)
-  implementation(libs.firebase.appcheck.recaptcha)
-  implementation(libs.firebase.appcheck.debug)
   implementation(libs.kotlinx.coroutines.android)
   implementation(libs.kotlinx.coroutines.core)
-  implementation(libs.logging.interceptor)
-  implementation(libs.moshi.kotlin)
   implementation(libs.okhttp)
   // implementation(libs.play.services.location)
-  implementation(libs.retrofit)
   testImplementation(libs.androidx.compose.ui.test.junit4)
   testImplementation(libs.androidx.core)
   testImplementation(libs.androidx.junit)
@@ -144,7 +140,6 @@ dependencies {
   debugImplementation(libs.androidx.compose.ui.test.manifest)
   debugImplementation(libs.androidx.compose.ui.tooling)
   "ksp"(libs.androidx.room.compiler)
-  "ksp"(libs.moshi.kotlin.codegen)
 }
 
 kotlin {

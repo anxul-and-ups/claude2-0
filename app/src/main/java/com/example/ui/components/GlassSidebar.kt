@@ -39,7 +39,6 @@ import androidx.compose.material.icons.filled.Alarm
 import androidx.compose.material.icons.filled.ArrowForward
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.ContactMail
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Folder
@@ -98,8 +97,8 @@ fun GlassSidebar(
     onNavigateHome: () -> Unit = {},
     onNavigateFolder: (String) -> Unit = {},
     onOpenFileEditor: () -> Unit,
-    onOpenNameGenerator: () -> Unit,
     onOpenHtmlViewer: () -> Unit = {},
+    onOpenNameGenerator: () -> Unit,
     onOpenCommandMode: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenRecycleBin: () -> Unit,
@@ -237,9 +236,9 @@ fun GlassSidebar(
                         }
                     )
 
-                    // HTML Viewer
-                    SidebarMenuItem(
-                        icon = Icons.Default.Code,
+                    // 2b. HTML Viewer (below File Editor)
+                    SidebarMenuItemPainter(
+                        icon = painterResource(R.drawable.ic_svg_html),
                         title = "HTML Viewer",
                         isDarkMode = isDarkMode,
                         onClick = {
@@ -477,19 +476,15 @@ fun SidebarMenuItem(
     showBlinkDot: Boolean = false,
     onClick: () -> Unit
 ) {
-    // The blinking loop only exists while the dot is visible; idle menu rows animate nothing.
-    val blinkAlpha = if (showBlinkDot) {
-        val infiniteTransition = rememberInfiniteTransition(label = "blink")
-        val a by infiniteTransition.animateFloat(
-            initialValue = 1f,
-            targetValue = 0.15f,
-            animationSpec = infiniteRepeatable(
-                animation = tween(600),
-                repeatMode = RepeatMode.Reverse
-            ), label = "blinkAlpha"
-        )
-        a
-    } else 1f
+    val infiniteTransition = rememberInfiniteTransition(label = "blink")
+    val blinkAlpha by infiniteTransition.animateFloat(
+        initialValue = 1f,
+        targetValue = 0.15f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(600),
+            repeatMode = RepeatMode.Reverse
+        ), label = "blinkAlpha"
+    )
     Row(
         modifier = Modifier
             .fillMaxWidth()

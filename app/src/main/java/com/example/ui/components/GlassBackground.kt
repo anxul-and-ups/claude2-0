@@ -11,23 +11,37 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import com.example.ui.theme.NeuDarkBg
 import com.example.ui.theme.NeuLightBg
+import dev.chrisbanes.haze.HazeState
+import dev.chrisbanes.haze.hazeSource
 
 /**
  * Neumorphic Canvas Background.
+ * If hazeState is provided, marks this as the SOURCE for Haze blur —
+ * meaning any HazeGlassCard placed on top will blur this background.
  */
 @Composable
 fun GlassBackground(
     isDarkMode: Boolean = true,
+    hazeState: HazeState? = null,
     content: @Composable () -> Unit
 ) {
     val baseBg = if (isDarkMode) NeuDarkBg else NeuLightBg
+
+    val bgModifier = if (hazeState != null && ENABLE_HAZE_BLUR) {
+        Modifier.fillMaxSize().hazeSource(state = hazeState)
+    } else {
+        Modifier.fillMaxSize()
+    }
 
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(baseBg)
     ) {
-        Canvas(modifier = Modifier.fillMaxSize()) {
+        val hasPhoto = LocalAppBackdrop.current.image != null
+        if (hasPhoto) {
+            BackdropImage(isDarkMode = isDarkMode, modifier = bgModifier)
+        } else Canvas(modifier = bgModifier) {
             val width = size.width
             val height = size.height
 

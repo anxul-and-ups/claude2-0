@@ -20,3 +20,9 @@ View your app in AI Studio: https://ai.studio/apps/9b557a82-5c23-41c7-a7a3-e8056
 5. Remove this line from the app's `build.gradle.kts` file: `signingConfig = signingConfigs.getByName("debugConfig")`
 6. Run the app on an emulator or physical device
 7. If you have already published your app in AI Studio, please [request upload key reset](https://support.google.com/googleplay/android-developer/answer/9842756#zippy=%2Crequest-an-upload-key-reset) in Google Play Console.
+
+
+## Changes (light build + HTML Viewer)
+- Release build with R8 and resource shrinking, no unused libraries (Firebase, Retrofit, Moshi removed), images stored as WebP, unused duplicate images and sounds removed. The workflow now builds the release APK (same persistent signing key, so it installs over the old app).
+- The staggered "wave" animation that replayed whenever a folder chip was opened is gone, folders now open instantly.
+- Sidebar: new **HTML Viewer** below File Editor. Editor with line numbers and colours, Preview (full page), Highlight (full page, with fold arrows), Format, Expand all, Collapse all, Sample, Clear, Import from file, Export to file, Dark mode.

@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.fadeIn
@@ -32,7 +33,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -110,6 +110,7 @@ import com.example.data.preferences.AppPreferences
 import com.example.data.repository.NoteRepository
 import com.example.ui.components.ExportDialog
 import com.example.ui.components.GlassBackground
+import dev.chrisbanes.haze.HazeState
 import com.example.ui.components.HazeGlassCard
 import com.example.ui.components.NeuIconButton
 import com.example.ui.components.PinLockDialog
@@ -147,6 +148,7 @@ fun MainWorkspaceScreen(
     onPickForHideCancel: () -> Unit = {}
 ) {
     val context = LocalContext.current
+    val hazeState = remember { HazeState() }
     val haptic = LocalHapticFeedback.current
     val clipboard = LocalClipboardManager.current
     val coroutineScope = rememberCoroutineScope()
@@ -341,7 +343,7 @@ fun MainWorkspaceScreen(
         }
     }
 
-    GlassBackground(isDarkMode = isDarkMode) {
+    GlassBackground(isDarkMode = isDarkMode, hazeState = hazeState) {
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -749,28 +751,17 @@ fun MainWorkspaceScreen(
                         }
                     }
                 } else {
-                    // key(selectedFolder): a new list per folder, so every folder switch replays the
-                    // subtle staggered fade / slide-up (this has nothing to do with the editor).
-                    androidx.compose.runtime.key(selectedFolder) {
+                    // Plain list: no per-folder replay animation (the old staggered "wave" made folder
+                    // switching lag because every card was rebuilt and animated at once).
                     LazyColumn(
                         modifier = Modifier.fillMaxSize(),
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                         contentPadding = PaddingValues(bottom = 80.dp)
                     ) {
-                        itemsIndexed(filteredNotes, key = { _, note -> note.id }) { index, note ->
-                            // Keep folder changes responsive: a short stagger is enough to
-                            // communicate movement without animating a long list for hundreds of ms.
-                            val staggerDelay = index.coerceAtMost(3) * 28
-                            androidx.compose.animation.AnimatedVisibility(
-                                visible = true,
-                                enter = fadeIn(tween(180, delayMillis = staggerDelay)) +
-                                    slideInVertically(
-                                        tween(180, delayMillis = staggerDelay),
-                                        initialOffsetY = { it / 8 }
-                                    )
-                            ) {
+                        items(filteredNotes, key = { it.id }) { note ->
                             CompactNoteCard(
                                 note = note,
+                                hazeState = hazeState,
                                 isDarkMode = isDarkMode,
                                 blurApis = blurApis,
                                 selectionMode = pickForHide,
@@ -791,9 +782,7 @@ fun MainWorkspaceScreen(
                                 },
                                 onCopy = {}
                             )
-                            }
                         }
-                    }
                     }
                 }
                 }
@@ -1088,6 +1077,7 @@ fun MainWorkspaceScreen(
     if (showAddFolderDialog) {
         androidx.compose.ui.window.Dialog(onDismissRequest = { showAddFolderDialog = false; newFolderNameInput = "" }) {
             HazeGlassCard(
+                hazeState = hazeState,
                 modifier = Modifier.fillMaxWidth().padding(16.dp),
                 shape = RoundedCornerShape(28.dp),
                 isDarkMode = isDarkMode,
@@ -1240,6 +1230,7 @@ fun MainWorkspaceScreen(
 @Composable
 fun CompactNoteCard(
     note: NoteEntity,
+    hazeState: HazeState,
     isDarkMode: Boolean,
     blurApis: Boolean,
     onOpen: () -> Unit,
@@ -1282,6 +1273,7 @@ fun CompactNoteCard(
     // Compact Card — Item 6: reduced from 10dp/44dp to 7dp/36dp so cards read
     // as smaller/denser while keeping the existing glass design language.
     HazeGlassCard(
+        hazeState = hazeState,
         modifier = Modifier
             .fillMaxWidth()
             .graphicsLayer { scaleX = pressScale; scaleY = pressScale }

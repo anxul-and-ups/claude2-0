@@ -27,19 +27,19 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Build Debug APK
+      - name: Build Release APK
         run: |
           if [ -f "./gradlew" ]; then
             chmod +x ./gradlew
-            ./gradlew assembleDebug
+            ./gradlew assembleRelease
           else
-            gradle assembleDebug
+            gradle assembleRelease
           fi
 
       - name: Package APK for Release
         run: |
           mkdir -p release-assets
-          find app/build/outputs/apk -name "*.apk" -exec cp {} release-assets/AU-Notes-App.apk \;
+          find app/build/outputs/apk/release -name "*.apk" -exec cp {} release-assets/AU-Notes-App.apk \;
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
