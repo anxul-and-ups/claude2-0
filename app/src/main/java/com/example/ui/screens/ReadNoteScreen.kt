@@ -311,14 +311,13 @@ fun ReadNoteScreen(
                     Spacer(modifier = Modifier.height(14.dp))
                 }
 
-                // Main Note Display Card
-                GlassCard(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(20.dp),
-                    isDarkMode = isDarkMode,
-                    elevation = 4.dp
+                // Read-mode content uses the available screen area directly; keep the action bar intact.
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
                 ) {
-                    Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 10.dp)) {
+                    Column(modifier = Modifier.fillMaxSize()) {
 
                         // Action Toolbar Card (Lock | Export | Delete | TTS | Copy)
                         GlassCard(
@@ -472,8 +471,14 @@ fun ReadNoteScreen(
                             }
                         }
 
-                        Spacer(modifier = Modifier.height(10.dp))
-
+                        // Scroll the note body independently so the title and action toolbar remain fixed.
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f)
+                                .verticalScroll(rememberScrollState())
+                                .padding(top = 10.dp)
+                        ) {
                         // Render Attached Images and Files in Read Mode (PART F Item 6 Fix)
                         if (attachments.isNotEmpty()) {
                             Text(
@@ -557,22 +562,19 @@ fun ReadNoteScreen(
                                 displayContent
                             ) {
                                 value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
-                                    com.example.ui.util.CodeHighlight.highlight(displayContent)
+                                    com.example.ui.util.CodeHighlight.highlight(displayContent, isDarkMode)
                                 }
                             }
                             Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(if (isDarkMode) Color(0xFF090B10) else Color(0xFF1E1E1E))
-                                    .border(1.dp, Color(0x3326C6DA), RoundedCornerShape(12.dp))
-                                    .padding(horizontal = 10.dp, vertical = 10.dp)
+                                    .padding(horizontal = 2.dp, vertical = 2.dp)
                             ) {
                                 Text(
                                     text = coloredCode,
                                     fontSize = 13.sp,
                                     fontFamily = FontFamily.Monospace,
-                                    color = com.example.ui.util.CodeHighlight.baseColor,
+                                    color = com.example.ui.util.CodeHighlight.baseColor(isDarkMode),
                                     lineHeight = 19.sp
                                 )
                             }
@@ -624,6 +626,7 @@ fun ReadNoteScreen(
                             )
                             Spacer(modifier = Modifier.height(8.dp))
                             RenderTable(note.tableData, isDarkMode)
+                        }
                         }
                     }
                 }

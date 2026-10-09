@@ -11,16 +11,25 @@ import androidx.compose.ui.text.font.FontWeight
  * Detects HTML / CSS / JSON / Python-like / C-like code by itself, works without any library.
  */
 object CodeHighlight {
-    private val keywordColor = Color(0xFFC792EA)
-    private val stringColor = Color(0xFFC3E88D)
-    private val numberColor = Color(0xFFF78C6C)
-    private val commentColor = Color(0xFF7C8089)
-    private val typeColor = Color(0xFF82AAFF)
-    private val functionColor = Color(0xFF7FDBCA)
-    private val attrColor = Color(0xFFFFCB6B)
-    private val tagColor = Color(0xFFFF6E8A)
-    private val doctypeColor = Color(0xFFB794F6)
-    val baseColor = Color(0xFFD6DEEB)
+    private data class Palette(
+        val keyword: Color, val string: Color, val number: Color, val comment: Color,
+        val type: Color, val function: Color, val attr: Color, val tag: Color,
+        val doctype: Color, val base: Color
+    )
+
+    private fun palette(dark: Boolean) = if (dark) Palette(
+        keyword = Color(0xFFD0A2F7), string = Color(0xFF9BE7A5), number = Color(0xFFFFA477),
+        comment = Color(0xFFA0A7B4), type = Color(0xFF9CC2FF), function = Color(0xFF70E1D0),
+        attr = Color(0xFFFFD166), tag = Color(0xFFFF7898), doctype = Color(0xFFC4B5FD),
+        base = Color(0xFFE2E8F0)
+    ) else Palette(
+        keyword = Color(0xFF7B2CBF), string = Color(0xFF218739), number = Color(0xFFD6531F),
+        comment = Color(0xFF737B87), type = Color(0xFF2864C5), function = Color(0xFF087F8C),
+        attr = Color(0xFF9A6500), tag = Color(0xFFC2185B), doctype = Color(0xFF7046B8),
+        base = Color(0xFF303846)
+    )
+
+    fun baseColor(isDarkMode: Boolean): Color = palette(isDarkMode).base
 
     private val keywords = setOf(
         "abstract", "as", "async", "await", "break", "by", "case", "catch", "class", "companion", "const", "constructor",
@@ -56,15 +65,16 @@ object CodeHighlight {
     }
 
     /** Returns the text with colours. Very long text is returned in one colour so the screen stays fast. */
-    fun highlight(text: String): AnnotatedString {
+    fun highlight(text: String, isDarkMode: Boolean = true): AnnotatedString {
         if (text.isEmpty() || text.length > 150_000) return AnnotatedString(text)
         val b = AnnotatedString.Builder(text)
+        val colors = palette(isDarkMode)
         when (detect(text)) {
-            Lang.HTML -> html(text, b)
-            Lang.CSS -> code(text, 0, text.length, b, Lang.CSS)
-            Lang.JSON -> json(text, b)
-            Lang.HASH -> code(text, 0, text.length, b, Lang.HASH)
-            Lang.CLIKE -> code(text, 0, text.length, b, Lang.CLIKE)
+            Lang.HTML -> html(text, b, colors)
+            Lang.CSS -> code(text, 0, text.length, b, Lang.CSS, colors)
+            Lang.JSON -> json(text, b, colors)
+            Lang.HASH -> code(text, 0, text.length, b, Lang.HASH, colors)
+            Lang.CLIKE -> code(text, 0, text.length, b, Lang.CLIKE, colors)
         }
         return b.toAnnotatedString()
     }
@@ -83,7 +93,7 @@ object CodeHighlight {
     }
 
     // ---------------------------------------------------------------- HTML
-    private fun html(src: String, b: AnnotatedString.Builder) {
+    private fun html(src: String, b: AnnotatedString.Builder, colors: Palette) {
         val n = src.length
         var i = 0
         while (i < n) {
@@ -94,7 +104,7 @@ object CodeHighlight {
             if (src.startsWith("<!--", i)) {
                 val e = src.indexOf("-->", i + 4)
                 val end = if (e < 0) n else e + 3
-                b.paint(commentColor, i, end, italic = true)
+                b.paint(colors.comment, i, end, italic = true)
                 i = end
                 continue
             }
@@ -113,7 +123,7 @@ object CodeHighlight {
                 i++
                 continue
             }
-            b.paint(if (isDoctype) doctypeColor else tagColor, i, j)
+            b.paint(if (isDoctype) colors.doctype else colors.tag, i, j)
             val tagName = src.substring(nameStart, j).lowercase()
             var k = j
             while (k < n && src[k] != '>') {
@@ -122,31 +132,31 @@ object CodeHighlight {
                     var e = k + 1
                     while (e < n && src[e] != ch) e++
                     val end = minOf(e + 1, n)
-                    b.paint(if (isDoctype) doctypeColor else stringColor, k, end)
+                    b.paint(if (isDoctype) colors.doctype else colors.string, k, end)
                     k = end
                 } else if (ch.isLetter()) {
                     var e = k
                     while (e < n && (src[e].isLetterOrDigit() || src[e] == '-' || src[e] == ':' || src[e] == '_' || src[e] == '.')) e++
-                    b.paint(if (isDoctype) doctypeColor else attrColor, k, e)
+                    b.paint(if (isDoctype) colors.doctype else colors.attr, k, e)
                     k = e
                 } else {
                     k++
                 }
             }
             val close = if (k < n) k + 1 else n
-            b.paint(if (isDoctype) doctypeColor else tagColor, k, close)
+            b.paint(if (isDoctype) colors.doctype else colors.tag, k, close)
             i = close
             if (!closing && (tagName == "script" || tagName == "style")) {
                 val e = src.indexOf("</$tagName", i, ignoreCase = true)
                 val bodyEnd = if (e < 0) n else e
-                code(src, i, bodyEnd, b, if (tagName == "style") Lang.CSS else Lang.CLIKE)
+                code(src, i, bodyEnd, b, if (tagName == "style") Lang.CSS else Lang.CLIKE, colors)
                 i = bodyEnd
             }
         }
     }
 
     // ---------------------------------------------------------------- JSON
-    private fun json(src: String, b: AnnotatedString.Builder) {
+    private fun json(src: String, b: AnnotatedString.Builder, colors: Palette) {
         val n = src.length
         var i = 0
         while (i < n) {
@@ -165,14 +175,14 @@ object CodeHighlight {
                 var k = end
                 while (k < n && (src[k] == ' ' || src[k] == '\t')) k++
                 val isKey = k < n && src[k] == ':'
-                b.paint(if (isKey) attrColor else stringColor, i, end)
+                b.paint(if (isKey) colors.attr else colors.string, i, end)
                 i = end
                 continue
             }
             if (c.isDigit() || (c == '-' && i + 1 < n && src[i + 1].isDigit())) {
                 var j = i + 1
                 while (j < n && (src[j].isDigit() || src[j] == '.' || src[j] == 'e' || src[j] == 'E' || src[j] == '+' || src[j] == '-')) j++
-                b.paint(numberColor, i, j)
+                b.paint(colors.number, i, j)
                 i = j
                 continue
             }
@@ -180,7 +190,7 @@ object CodeHighlight {
                 var j = i
                 while (j < n && src[j].isLetter()) j++
                 val w = src.substring(i, j)
-                if (w == "true" || w == "false" || w == "null") b.paint(keywordColor, i, j)
+                if (w == "true" || w == "false" || w == "null") b.paint(colors.keyword, i, j)
                 i = j
                 continue
             }
@@ -189,7 +199,7 @@ object CodeHighlight {
     }
 
     // ------------------------------------------------- C-like / CSS / hash languages
-    private fun code(src: String, from: Int, to: Int, b: AnnotatedString.Builder, lang: Lang) {
+    private fun code(src: String, from: Int, to: Int, b: AnnotatedString.Builder, lang: Lang, colors: Palette) {
         val n = minOf(to, src.length)
         var i = from
         val cLike = lang != Lang.HASH
@@ -202,21 +212,21 @@ object CodeHighlight {
             if (cLike && c == '/' && i + 1 < n && src[i + 1] == '*') {
                 val e = src.indexOf("*/", i + 2)
                 val end = if (e < 0 || e + 2 > n) n else e + 2
-                b.paint(commentColor, i, end, italic = true)
+                b.paint(colors.comment, i, end, italic = true)
                 i = end
                 continue
             }
             if (cLike && lang != Lang.CSS && c == '/' && i + 1 < n && src[i + 1] == '/') {
                 var e = src.indexOf('\n', i)
                 if (e < 0 || e > n) e = n
-                b.paint(commentColor, i, e, italic = true)
+                b.paint(colors.comment, i, e, italic = true)
                 i = e
                 continue
             }
             if (lang == Lang.HASH && c == '#') {
                 var e = src.indexOf('\n', i)
                 if (e < 0 || e > n) e = n
-                b.paint(commentColor, i, e, italic = true)
+                b.paint(colors.comment, i, e, italic = true)
                 i = e
                 continue
             }
@@ -231,7 +241,7 @@ object CodeHighlight {
                     j++
                 }
                 val end = minOf(j + 1, n)
-                b.paint(stringColor, i, end)
+                b.paint(colors.string, i, end)
                 i = end
                 continue
             }
@@ -239,7 +249,7 @@ object CodeHighlight {
                 var j = i + 1
                 while (j < n && (src[j].isDigit() || src[j] in 'a'..'f' || src[j] in 'A'..'F')) j++
                 if (j - i in 4..9) {
-                    b.paint(numberColor, i, j)
+                    b.paint(colors.number, i, j)
                     i = j
                     continue
                 }
@@ -247,14 +257,14 @@ object CodeHighlight {
             if (c == '@' && i + 1 < n && src[i + 1].isLetter()) {
                 var j = i + 1
                 while (j < n && (src[j].isLetterOrDigit() || src[j] == '_' || src[j] == '-')) j++
-                b.paint(attrColor, i, j)
+                b.paint(colors.attr, i, j)
                 i = j
                 continue
             }
             if (c.isDigit() || (c == '.' && i + 1 < n && src[i + 1].isDigit() && lang == Lang.CSS)) {
                 var j = i
                 while (j < n && (src[j].isLetterOrDigit() || src[j] == '.' || src[j] == '%' || src[j] == '_')) j++
-                b.paint(numberColor, i, j)
+                b.paint(colors.number, i, j)
                 i = j
                 continue
             }
@@ -266,12 +276,12 @@ object CodeHighlight {
                 while (k < n && (src[k] == ' ' || src[k] == '\t')) k++
                 val next = if (k < n) src[k] else ' '
                 when {
-                    lang == Lang.CSS && depth > 0 && next == ':' -> b.paint(attrColor, i, j)
-                    lang == Lang.CSS && word.startsWith("-") -> b.paint(attrColor, i, j)
-                    word in keywords -> b.paint(keywordColor, i, j, bold = true)
-                    next == '(' -> b.paint(functionColor, i, j)
-                    word[0].isUpperCase() && lang != Lang.CSS -> b.paint(typeColor, i, j)
-                    lang == Lang.CSS && depth == 0 -> b.paint(typeColor, i, j)
+                    lang == Lang.CSS && depth > 0 && next == ':' -> b.paint(colors.attr, i, j)
+                    lang == Lang.CSS && word.startsWith("-") -> b.paint(colors.attr, i, j)
+                    word in keywords -> b.paint(colors.keyword, i, j, bold = true)
+                    next == '(' -> b.paint(colors.function, i, j)
+                    word[0].isUpperCase() && lang != Lang.CSS -> b.paint(colors.type, i, j)
+                    lang == Lang.CSS && depth == 0 -> b.paint(colors.type, i, j)
                 }
                 i = j
                 continue
