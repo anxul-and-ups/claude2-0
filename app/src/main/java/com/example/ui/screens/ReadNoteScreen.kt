@@ -160,12 +160,12 @@ fun ReadNoteScreen(
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(horizontal = 8.dp, vertical = 10.dp)
+                    .padding(horizontal = 6.dp, vertical = 6.dp)
             ) {
-                // Fixed top navigation bar.
+                // Compact header: back | title + category/date | alarm | edit.
+                // (The old separate title card used a full extra row of screen height.)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     NeuIconButton(
@@ -178,71 +178,70 @@ fun ReadNoteScreen(
                         onClick = onBack
                     )
 
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        // Alarm / Reminder — Item 14: moved here from Write Mode
-                        NeuIconButton(
-                            icon = Icons.Default.Alarm,
-                            contentDescription = "Set Alarm Reminder",
-                            isDarkMode = isDarkMode,
-                            size = 38.dp,
-                            iconSize = 18.dp,
-                            tint = if (activeAlarm != null) CrimsonPrimary else (if (isDarkMode) Color.White else Color.Black),
-                            onClick = { showAlarmDialog = true }
-                        )
+                    Spacer(modifier = Modifier.width(10.dp))
 
-                        Spacer(modifier = Modifier.width(8.dp))
-
-                        // Edit Floating Action Button
-                        GlassCard(
-                            shape = RoundedCornerShape(12.dp),
-                            isDarkMode = isDarkMode,
-                            onClick = { onEditNote(note) }
-                        ) {
-                            Row(
-                                modifier = Modifier
-                                    .background(CrimsonPrimary)
-                                    .padding(horizontal = 14.dp, vertical = 8.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    painter = painterResource(R.drawable.ic_edit_note),
-                                    contentDescription = "Edit Note",
-                                    tint = Color.White,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = "Edit",
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color.White
-                                )
-                            }
-                        }
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                // Fixed title bar — stays pinned while the note body scrolls.
-                GlassCard(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(16.dp),
-                    isDarkMode = isDarkMode,
-                    elevation = 3.dp
-                ) {
-                    Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp)) {
+                    Column(modifier = Modifier.weight(1f)) {
                         Text(
                             text = note.title.ifBlank { "Untitled Note" },
-                            fontSize = 21.sp,
+                            fontSize = 17.sp,
+                            lineHeight = 21.sp,
                             fontWeight = FontWeight.ExtraBold,
                             color = if (isDarkMode) Color.White else Color(0xFF111111),
-                            maxLines = 2
+                            maxLines = 2,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                         )
-                        Spacer(Modifier.height(4.dp))
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(note.category, fontSize = 10.sp, fontWeight = FontWeight.Bold, color = CrimsonPrimary)
-                            Text(dateFormatter.format(Date(note.updatedAt)), fontSize = 10.5.sp, color = if (isDarkMode) Color.White.copy(.55f) else Color.Gray)
+                            Text(
+                                text = "  •  " + dateFormatter.format(Date(note.updatedAt)),
+                                fontSize = 10.sp,
+                                color = if (isDarkMode) Color.White.copy(.55f) else Color.Gray,
+                                maxLines = 1,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.width(8.dp))
+
+                    // Alarm / Reminder
+                    NeuIconButton(
+                        icon = Icons.Default.Alarm,
+                        contentDescription = "Set Alarm Reminder",
+                        isDarkMode = isDarkMode,
+                        size = 38.dp,
+                        iconSize = 18.dp,
+                        tint = if (activeAlarm != null) CrimsonPrimary else (if (isDarkMode) Color.White else Color.Black),
+                        onClick = { showAlarmDialog = true }
+                    )
+
+                    Spacer(modifier = Modifier.width(8.dp))
+
+                    // Edit button
+                    GlassCard(
+                        shape = RoundedCornerShape(12.dp),
+                        isDarkMode = isDarkMode,
+                        onClick = { onEditNote(note) }
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .background(CrimsonPrimary)
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                painter = painterResource(R.drawable.ic_edit_note),
+                                contentDescription = "Edit Note",
+                                tint = Color.White,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(5.dp))
+                            Text(
+                                text = "Edit",
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
+                            )
                         }
                     }
                 }
@@ -254,7 +253,7 @@ fun ReadNoteScreen(
                         .weight(1f)
                         .verticalScroll(rememberScrollState())
                 ) {
-                    Spacer(modifier = Modifier.height(10.dp))
+                    Spacer(modifier = Modifier.height(8.dp))
 
                 // Active Alarm Details — Item 17: note name, time, countdown,
                 // ringtone, status, and an edit (pencil) icon to reopen the dialog.
@@ -319,9 +318,7 @@ fun ReadNoteScreen(
                     isDarkMode = isDarkMode,
                     elevation = 4.dp
                 ) {
-                    Column(modifier = Modifier.padding(18.dp)) {
-                        Spacer(modifier = Modifier.height(2.dp))
-
+                    Column(modifier = Modifier.padding(horizontal = 10.dp, vertical = 10.dp)) {
 
                         // Action Toolbar Card (Lock | Export | Delete | TTS | Copy)
                         GlassCard(
@@ -334,7 +331,7 @@ fun ReadNoteScreen(
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(vertical = 8.dp, horizontal = 10.dp),
+                                    .padding(vertical = 5.dp, horizontal = 8.dp),
                                 horizontalArrangement = Arrangement.SpaceEvenly,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
@@ -475,7 +472,7 @@ fun ReadNoteScreen(
                             }
                         }
 
-                        Spacer(modifier = Modifier.height(16.dp))
+                        Spacer(modifier = Modifier.height(10.dp))
 
                         // Render Attached Images and Files in Read Mode (PART F Item 6 Fix)
                         if (attachments.isNotEmpty()) {
@@ -554,20 +551,29 @@ fun ReadNoteScreen(
                         }
 
                         if (note.category == "Code" || note.isCodeFormat) {
+                            // Syntax colours are computed in the background so big code never freezes the screen.
+                            val coloredCode by androidx.compose.runtime.produceState(
+                                initialValue = AnnotatedString(displayContent),
+                                displayContent
+                            ) {
+                                value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                                    com.example.ui.util.CodeHighlight.highlight(displayContent)
+                                }
+                            }
                             Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .clip(RoundedCornerShape(12.dp))
                                     .background(if (isDarkMode) Color(0xFF090B10) else Color(0xFF1E1E1E))
                                     .border(1.dp, Color(0x3326C6DA), RoundedCornerShape(12.dp))
-                                    .padding(16.dp)
+                                    .padding(horizontal = 10.dp, vertical = 10.dp)
                             ) {
                                 Text(
-                                    text = displayContent,
+                                    text = coloredCode,
                                     fontSize = 13.sp,
                                     fontFamily = FontFamily.Monospace,
-                                    color = Color(0xFF80D8FF),
-                                    lineHeight = 20.sp
+                                    color = com.example.ui.util.CodeHighlight.baseColor,
+                                    lineHeight = 19.sp
                                 )
                             }
                         } else {

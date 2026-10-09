@@ -117,7 +117,9 @@ class FileManagerStore(context: Context) {
             } ?: return null
             if (folder != null) assign(dest.absolutePath, folder)
             dest
-        } catch (_: Exception) { null }
+        } catch (_: Exception) {
+            null
+        }
     }
 
     /** Copies a file that lives outside app storage (e.g. Downloads) into the app. */

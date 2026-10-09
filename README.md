@@ -26,3 +26,5 @@ View your app in AI Studio: https://ai.studio/apps/9b557a82-5c23-41c7-a7a3-e8056
 - Release build with R8 and resource shrinking, no unused libraries (Firebase, Retrofit, Moshi removed), images stored as WebP, unused duplicate images and sounds removed. The workflow now builds the release APK (same persistent signing key, so it installs over the old app).
 - The staggered "wave" animation that replayed whenever a folder chip was opened is gone, folders now open instantly.
 - Sidebar: new **HTML Viewer** below File Editor. Editor with line numbers and colours, Preview (full page), Highlight (full page, with fold arrows), Format, Expand all, Collapse all, Sample, Clear, Import from file, Export to file, Dark mode.
+- Note view mode: the separate pinned title card was merged into the top bar (back | title + category/date | alarm | edit), card/code paddings were reduced, so the note text gets much more room. Code notes are now syntax coloured (HTML incl. CSS/JS inside, CSS, JSON, Python-like, C-like) instead of one colour.
+- Build fixes: missing imports (heightIn, collectAsState), `importIntoAppStorage` block body, keystore path resolved from the project root.

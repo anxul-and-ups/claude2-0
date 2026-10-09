@@ -23,6 +23,7 @@ android {
 
   signingConfigs {
     create("persistent") {
+      // Relative paths are resolved from the PROJECT ROOT (not from app/), where my-upload-key.jks lives.
       val keystorePath = System.getenv("KEYSTORE_PATH")
         ?: providers.gradleProperty("AU_KEYSTORE_PATH").orNull?.let { rootProject.file(it).absolutePath }
         ?: rootProject.file("my-upload-key.jks").absolutePath
